@@ -1094,6 +1094,31 @@ static int sdhci_msm_dt_parse_vreg_info(struct device *dev,
 	return ret;
 }
 
+#ifdef CONFIG_HUAWEI_KERNEL
+static int sdhci_msm_dt_get_poll_info(void)
+{
+	int ret = 0;
+	char prop_name[MAX_PROP_SIZE];
+	struct device_node *np = NULL;
+
+	/*try to get the device node huawei-polling-support.*/
+	np = of_find_compatible_node(NULL,NULL,"huawei-polling-support");
+	if(!np)
+	{
+		/*if np is NULL,return 0.*/
+		return ret;
+	}
+	snprintf(prop_name, MAX_PROP_SIZE,
+			"%s", "huawei,support-polling");
+	if (of_get_property(np, prop_name, NULL))
+	{
+		/*if we can get huawei,support-polling,return 1.*/
+		ret = 1;
+	}
+
+	return ret;
+}
+#endif
 /* GPIO/Pad data extraction */
 static int sdhci_msm_dt_get_pad_pull_info(struct device *dev, int id,
 		struct sdhci_msm_pad_pull_data **pad_pull_data)
@@ -1816,8 +1841,32 @@ static int sdhci_msm_setup_vreg(struct sdhci_msm_pltfm_data *pdata,
 		goto out;
 	}
 
+	/*L21 should be powered up before L18 when resume and
+	 *L18 should be powered down before L21 when suspend.
+	 */
+#ifdef CONFIG_HUAWEI_KERNEL
+	if(pdata->nonremovable != true)
+	{
+		if(enable)
+		{
+			vreg_table[0] = curr_slot->vdd_io_data;
+			vreg_table[1] = curr_slot->vdd_data;
+		}
+		else
+		{
+			vreg_table[0] = curr_slot->vdd_data;
+			vreg_table[1] = curr_slot->vdd_io_data;
+		}
+	}
+	else
+	{
+		vreg_table[0] = curr_slot->vdd_data;
+		vreg_table[1] = curr_slot->vdd_io_data;
+	}
+#else
 	vreg_table[0] = curr_slot->vdd_data;
 	vreg_table[1] = curr_slot->vdd_io_data;
+#endif
 
 	for (i = 0; i < ARRAY_SIZE(vreg_table); i++) {
 		if (vreg_table[i]) {
@@ -2886,6 +2935,9 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 	msm_host->mmc->caps2 |= MMC_CAP2_ASYNC_SDIO_IRQ_4BIT_MODE;
 	msm_host->mmc->caps2 |= MMC_CAP2_CORE_PM;
 	msm_host->mmc->pm_caps |= MMC_PM_KEEP_POWER;
+#ifdef CONFIG_HUAWEI_KERNEL 
+	msm_host->mmc->caps2 |= MMC_CAP2_INIT_BKOPS;
+#endif
 
 	if (msm_host->pdata->nonremovable)
 		msm_host->mmc->caps |= MMC_CAP_NONREMOVABLE;
@@ -2894,6 +2946,27 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 
 	init_completion(&msm_host->pwr_irq_completion);
 
+#ifdef CONFIG_HUAWEI_KERNEL
+	if((!strcmp(mmc_hostname(msm_host->mmc), "mmc1"))&&(sdhci_msm_dt_get_poll_info()))
+	{
+		/*add the polling flag to caps to support polling.*/
+		pr_info("polling has enable sucess.\n");
+		host->mmc->caps |= MMC_CAP_NEEDS_POLL;
+
+	}
+	else
+	{
+		if (gpio_is_valid(msm_host->pdata->status_gpio)) {
+			ret = mmc_cd_gpio_request(msm_host->mmc,
+					msm_host->pdata->status_gpio);
+			if (ret) {
+				dev_err(&pdev->dev, "%s: Failed to request card detection IRQ %d\n",
+						__func__, ret);
+				goto vreg_deinit;
+			}
+		}
+	}
+#else
 	if (gpio_is_valid(msm_host->pdata->status_gpio)) {
 		ret = mmc_cd_gpio_request(msm_host->mmc,
 				msm_host->pdata->status_gpio);
@@ -2903,6 +2976,7 @@ static int __devinit sdhci_msm_probe(struct platform_device *pdev)
 			goto vreg_deinit;
 		}
 	}
+#endif
 
 	if (dma_supported(mmc_dev(host->mmc), DMA_BIT_MASK(32))) {
 		host->dma_mask = DMA_BIT_MASK(32);
@@ -2953,7 +3027,11 @@ remove_host:
 	dead = (readl_relaxed(host->ioaddr + SDHCI_INT_STATUS) == 0xffffffff);
 	sdhci_remove_host(host, dead);
 free_cd_gpio:
+#ifdef CONFIG_HUAWEI_KERNEL
+	if ((!(host->mmc->caps & MMC_CAP_NEEDS_POLL))&&gpio_is_valid(msm_host->pdata->status_gpio))
+#else
 	if (gpio_is_valid(msm_host->pdata->status_gpio))
+#endif
 		mmc_cd_gpio_free(msm_host->mmc);
 vreg_deinit:
 	sdhci_msm_vreg_init(&pdev->dev, msm_host->pdata, false);
@@ -3000,7 +3078,11 @@ static int __devexit sdhci_msm_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	sdhci_pltfm_free(pdev);
 
+#ifdef CONFIG_HUAWEI_KERNEL
+	if ((!(msm_host->mmc->caps & MMC_CAP_NEEDS_POLL))&&gpio_is_valid(msm_host->pdata->status_gpio))
+#else
 	if (gpio_is_valid(msm_host->pdata->status_gpio))
+#endif
 		mmc_cd_gpio_free(msm_host->mmc);
 
 	sdhci_msm_vreg_init(&pdev->dev, msm_host->pdata, false);
@@ -3058,7 +3140,11 @@ static int sdhci_msm_suspend(struct device *dev)
 	struct sdhci_msm_host *msm_host = pltfm_host->priv;
 	int ret = 0;
 
+#ifdef CONFIG_HUAWEI_KERNEL
+	if ((!(msm_host->mmc->caps & MMC_CAP_NEEDS_POLL))&&gpio_is_valid(msm_host->pdata->status_gpio))
+#else
 	if (gpio_is_valid(msm_host->pdata->status_gpio))
+#endif
 		mmc_cd_gpio_free(msm_host->mmc);
 
 	if (pm_runtime_suspended(dev)) {
@@ -3079,7 +3165,11 @@ static int sdhci_msm_resume(struct device *dev)
 	struct sdhci_msm_host *msm_host = pltfm_host->priv;
 	int ret = 0;
 
+#ifdef CONFIG_HUAWEI_KERNEL
+	if ((!(msm_host->mmc->caps & MMC_CAP_NEEDS_POLL))&&gpio_is_valid(msm_host->pdata->status_gpio)) {
+#else
 	if (gpio_is_valid(msm_host->pdata->status_gpio)) {
+#endif
 		ret = mmc_cd_gpio_request(msm_host->mmc,
 				msm_host->pdata->status_gpio);
 		if (ret)

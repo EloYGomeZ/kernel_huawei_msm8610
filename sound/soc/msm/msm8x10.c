@@ -44,12 +44,24 @@
 #define WCD9XXX_MBHC_DEF_BUTTONS 8
 #define WCD9XXX_MBHC_DEF_RLOADS 5
 
+//for Y330 speaker & receiver 2 in 1
+#define SPK_EN_GPIO 15
+#define DEFUALT_SPK_SWITCH_VALUE 0x0
+#define SPK_ON 1
+#define GPIO_PULL_UP 1
+#define GPIO_PULL_DOWN 0
+
+static int ext_spk_switch = DEFUALT_SPK_SWITCH_VALUE;
+
 static int msm_btsco_rate = BTSCO_RATE_8KHZ;
 static int msm_btsco_ch = 1;
 
 static int msm_proxy_rx_ch = 2;
 static struct platform_device *spdev;
 static int ext_spk_amp_gpio = -1;
+
+//merge the headset detect code from es4 baseline
+/* merge qcom patch to solve the headset detect problem in FC baseline*/
 
 /* pointers for digital codec register mappings */
 static void __iomem *pcbcr;
@@ -472,6 +484,81 @@ static int msm_mi2s_snd_startup(struct snd_pcm_substream *substream)
 	return ret;
 }
 
+/* The function to pull up GPIO 15 to enable SPK*/
+static void spk_gpio_on(void)
+{
+	int ret = 0;
+	ret = gpio_request(SPK_EN_GPIO,
+					  "SPK_EN_GPIO");
+	if (ret) 
+	{
+		pr_err("%s: Failed to configure spk enable "
+			"gpio %u\n", __func__, SPK_EN_GPIO);
+		return;
+	}
+
+	pr_debug("%s: Enable SPK gpio %u\n",
+			__func__, SPK_EN_GPIO);
+	gpio_direction_output(SPK_EN_GPIO, GPIO_PULL_UP);
+}
+
+/* The function to pull down GPIO 15 to disable SPK*/
+static void spk_gpio_off(void)
+{
+	pr_debug("%s: Pull down and free spk enable gpio %u\n",
+			__func__, SPK_EN_GPIO);
+	gpio_direction_output(SPK_EN_GPIO, GPIO_PULL_DOWN);
+	gpio_free(SPK_EN_GPIO);
+}
+
+static const char *spk_switch_text[] = {"OFF","ON"};
+
+static const struct soc_enum ext_spk_switch_enum[] = {
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(spk_switch_text),
+						spk_switch_text),
+};
+
+/* The function to get SPK status */
+static int ext_spk_switch_get(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+    if(NULL == kcontrol || NULL == ucontrol)
+    {
+        pr_err("%s: input pointer is null\n", __func__);
+    }
+
+	pr_debug("%s: ext_spk_switch = %d\n", __func__,
+			 ext_spk_switch);
+	ucontrol->value.integer.value[0] = ext_spk_switch;
+	return 0;
+}
+
+/* The function to set SPK status */
+static int ext_spk_switch_put(struct snd_kcontrol *kcontrol,
+					struct snd_ctl_elem_value *ucontrol)
+{
+	int ret = 0;
+	if(NULL == kcontrol || NULL == ucontrol)
+    {
+        pr_err("%s: input pointer is null\n", __func__);
+    }
+	ext_spk_switch = ucontrol->value.integer.value[0];
+	pr_debug("%s: ext_spk_switch = %d"
+			 " ucontrol->value.integer.value[0] = %d\n", __func__,
+			 ext_spk_switch,
+			 (int) ucontrol->value.integer.value[0]);
+	if(ext_spk_switch)
+	{
+		spk_gpio_on();
+		ret = SPK_ON;
+	}
+	else
+	{
+		spk_gpio_off();
+	}
+	return ret;
+}
+
 static const struct soc_enum msm_snd_enum[] = {
 	SOC_ENUM_SINGLE_EXT(2, sec_mi2s_rx_ch_text),
 	SOC_ENUM_SINGLE_EXT(2, pri_mi2s_tx_ch_text),
@@ -484,6 +571,8 @@ static const struct snd_kcontrol_new msm_snd_controls[] = {
 			msm_sec_mi2s_rx_ch_get, msm_sec_mi2s_rx_ch_put),
 	SOC_ENUM_EXT("MI2S_TX Channels", msm_snd_enum[1],
 			msm_pri_mi2s_tx_ch_get, msm_pri_mi2s_tx_ch_put),
+	SOC_ENUM_EXT("SPK",ext_spk_switch_enum[0],
+	       ext_spk_switch_get,ext_spk_switch_put),
 };
 
 static int msm_audrx_init(struct snd_soc_pcm_runtime *rtd)
@@ -527,6 +616,12 @@ exit:
 	return ret;
 }
 
+/* define headset scope value */
+#ifdef CONFIG_HUAWEI_KERNEL
+#define HEADSET_TYPE_MAX_VALUE   1850
+#define HEADSET_BUTTON_MIN_VALUE -100
+#define HEADSET_BUTTON_MAX_VALUE 50
+#endif
 static void *def_msm8x10_wcd_mbhc_cal(void)
 {
 	void *msm8x10_wcd_cal;
@@ -559,7 +654,12 @@ static void *def_msm8x10_wcd_mbhc_cal(void)
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_PLUG_TYPE_PTR(msm8x10_wcd_cal)->X) = (Y))
 	S(v_no_mic, 30);
+/* change to commonly use value */
+#ifndef CONFIG_HUAWEI_KERNEL
 	S(v_hs_max, 2550);
+#else
+	S(v_hs_max, HEADSET_TYPE_MAX_VALUE);
+#endif
 #undef S
 #define S(X, Y) ((WCD9XXX_MBHC_CAL_BTN_DET_PTR(msm8x10_wcd_cal)->X) = (Y))
 	S(c[0], 62);
@@ -577,8 +677,14 @@ static void *def_msm8x10_wcd_mbhc_cal(void)
 	btn_low = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg, MBHC_BTN_DET_V_BTN_LOW);
 	btn_high = wcd9xxx_mbhc_cal_btn_det_mp(btn_cfg,
 					       MBHC_BTN_DET_V_BTN_HIGH);
+/* change to commonly use value (had used in 8930 platform)*/
+#ifndef CONFIG_HUAWEI_KERNEL
 	btn_low[0] = -50;
 	btn_high[0] = 10;
+#else
+	btn_low[0] = HEADSET_BUTTON_MIN_VALUE;
+	btn_high[0] = HEADSET_BUTTON_MAX_VALUE;
+#endif
 	btn_low[1] = 11;
 	btn_high[1] = 52;
 	btn_low[2] = 53;

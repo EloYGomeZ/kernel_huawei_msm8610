@@ -152,6 +152,7 @@ struct msm_vfe_axi_stream_release_cmd {
 enum msm_vfe_axi_stream_cmd {
 	STOP_STREAM,
 	START_STREAM,
+	/* case:01493906 patch:SBA_M8610AAAAANLYD1935.1_KPI_isp_reset_Huawei*/
 	STOP_IMMEDIATELY,
 };
 

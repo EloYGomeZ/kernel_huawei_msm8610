@@ -24,6 +24,10 @@
 #include "mdp3_ctrl.h"
 #include "mdp3.h"
 #include "mdp3_ppp.h"
+#include <linux/hw_lcd_common.h>
+#ifdef CONFIG_HUAWEI_KERNEL
+extern int mdss_dsi_set_fps(int frame_rate);
+#endif
 
 #define MDP_CORE_CLK_RATE	100000000
 #define VSYNC_EXPIRE_TICK	4
@@ -502,6 +506,7 @@ static int mdp3_ctrl_dma_init(struct msm_fb_data_type *mfd,
 	return rc;
 }
 
+/* rollback to qcom fc baseline original code */
 static int mdp3_ctrl_on(struct msm_fb_data_type *mfd)
 {
 	int rc = 0;
@@ -594,6 +599,10 @@ on_error:
 	return rc;
 }
 
+//define the mutex lock and globle vars here
+DEFINE_MUTEX(bta_read);
+int esd_bta_flag = 0;
+extern int esd_check_flag;
 static int mdp3_ctrl_off(struct msm_fb_data_type *mfd)
 {
 	int rc = 0;
@@ -616,6 +625,15 @@ static int mdp3_ctrl_off(struct msm_fb_data_type *mfd)
 		goto off_error;
 	}
 
+	//stop the IC register ESD check before DMA stop
+	mutex_lock(&bta_read);
+	if(1 == esd_check_flag)
+	{
+		esd_bta_flag = 0;
+		LCD_LOG_INFO("%s:%d, disable IC regster ESD here",
+					__func__, __LINE__);
+	}
+	mutex_unlock(&bta_read);
 	mdp3_ctrl_clk_enable(mfd, 1);
 
 	mdp3_histogram_stop(mdp3_session, MDP_BLOCK_DMA_P);
@@ -717,6 +735,9 @@ reset_error:
 	mutex_unlock(&mdp3_session->lock);
 	return rc;
 }
+#ifdef CONFIG_HUAWEI_LCD
+bool reset_done = false;
+#endif
 
 static int mdp3_ctrl_reset(struct msm_fb_data_type *mfd)
 {
@@ -919,7 +940,11 @@ static int mdp3_ctrl_display_commit_kickoff(struct msm_fb_data_type *mfd,
 	struct mdp3_img_data *data;
 	struct mdss_panel_info *panel_info = mfd->panel_info;
 	int rc = 0;
+
+#ifndef CONFIG_HUAWEI_LCD
 	bool reset_done = false;
+#endif
+
 	struct mdss_panel_data *panel;
 
 	if (!mfd || !mfd->mdp.private1)
@@ -972,9 +997,18 @@ static int mdp3_ctrl_display_commit_kickoff(struct msm_fb_data_type *mfd,
 	}
 
 	mdp3_session->vsync_before_commit = 0;
+
+#ifndef CONFIG_HUAWEI_LCD
 	if (reset_done && (panel && panel->set_backlight))
 		panel->set_backlight(panel, panel->panel_info.bl_max);
+#else
+	if (reset_done && (panel && panel->set_backlight))
+	{
+		panel->set_backlight(panel, panel->panel_info.bl_max);
+		reset_done = false;
+	}
 
+#endif
 	mutex_unlock(&mdp3_session->lock);
 
 	mdss_fb_update_notify_update(mfd);
@@ -1071,6 +1105,24 @@ static int mdp3_get_metadata(struct msm_fb_data_type *mfd,
 	return ret;
 }
 
+#ifdef CONFIG_HUAWEI_KERNEL
+static int mdp3_set_metadata(struct msm_fb_data_type *mfd,
+				struct msmfb_metadata *metadata)
+{
+	int ret = 0;
+	switch (metadata->op) {
+	case metadata_op_frame_rate:
+        pr_err("metadata_op_frame_rate %d\n", metadata->data.panel_frame_rate);
+        ret = mdss_dsi_set_fps(metadata->data.panel_frame_rate);
+        break;
+	default:
+		pr_warn("Unsupported request to MDP META IOCTL.\n");
+		ret = -EINVAL;
+		break;
+	}
+	return ret;
+}
+#endif
 int mdp3_validate_start_req(struct mdp_histogram_start_req *req)
 {
 	if (req->frame_cnt >= MDP_HISTOGRAM_FRAME_COUNT_MAX) {
@@ -1503,6 +1555,12 @@ static int mdp3_ctrl_ioctl_handler(struct msm_fb_data_type *mfd,
 
 	if (!mdp3_session->status && cmd != MSMFB_METADATA_GET) {
 		pr_err("mdp3_ctrl_ioctl_handler, display off!\n");
+#ifdef CONFIG_HUAWEI_KERNEL
+		if (cmd == MSMFB_METADATA_SET)
+		{
+		    return 0;// app set error timing
+		}
+#endif
 		return -EPERM;
 	}
 
@@ -1529,6 +1587,16 @@ static int mdp3_ctrl_ioctl_handler(struct msm_fb_data_type *mfd,
 		}
 		break;
 	case MSMFB_ASYNC_BLIT:
+#ifdef CONFIG_HUAWEI_LCD
+		if (!mdp3_iommu_is_attached(MDP3_CLIENT_DMA_P))
+		{
+			pr_debug("continuous splash screen, IOMMU not attached\n");
+			mdp3_ctrl_reset(mfd);
+			reset_done = true;
+		}
+#endif
+
+
 		rc = mdp3_ctrl_async_blit_req(mfd, argp);
 		break;
 	case MSMFB_BLIT:
@@ -1542,6 +1610,14 @@ static int mdp3_ctrl_ioctl_handler(struct msm_fb_data_type *mfd,
 		if (!rc)
 			rc = copy_to_user(argp, &metadata, sizeof(metadata));
 		break;
+#ifdef CONFIG_HUAWEI_KERNEL
+	case MSMFB_METADATA_SET:
+		rc = copy_from_user(&metadata, argp, sizeof(metadata));
+		if (rc)
+			return rc;
+		rc = mdp3_set_metadata(mfd, &metadata);
+		break;
+#endif
 	case MSMFB_OVERLAY_GET:
 		rc = copy_from_user(req, argp, sizeof(*req));
 		if (!rc) {

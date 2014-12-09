@@ -9,7 +9,7 @@
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
  */
-
+//to solve the blue flicker of display
 &soc {
 	msm-mmss-noc@fc478000 {
 		compatible = "msm-bus-fabric";
@@ -30,6 +30,7 @@
 		coresight-child-list = <&funnel_in0>;
 		coresight-child-ports = <5>;
 
+		//blue display issue patch
 		mas-mdp-port0 {
 			cell-id = <22>;
 			label = "mas-mdp-port0";
@@ -41,8 +42,8 @@
 			qcom,qport = <0>;
 			qcom,ws = <10000>;
 			qcom,mas-hw-id = <8>;
-			qcom,prio1 = <2>;
-			qcom,prio0 = <2>;
+			qcom,prio1 = <3>;
+			qcom,prio0 = <3>;
 		};
 
 		mas-vfe {
@@ -913,7 +914,7 @@
 		qcom,fabclk-dual = "mem_clk";
 		qcom,fabclk-active = "mem_a_clk";
 		qcom,ntieredslaves = <0>;
-		qcom,qos-freq = <19200>;
+                qcom,qos-freq = <19200>;
 		qcom,hw-sel = "BIMC";
 		qcom,rpm-en;
 
@@ -937,12 +938,12 @@
 			qcom,prio-rd = <0>;
 			qcom,prio-wr = <0>;
 			qcom,prio-lvl = <0>;
-			qcom,mode-thresh = "Fixed";
-			qcom,thresh = <800000>;
-			qcom,dual-conf;
-			qcom,bimc,bw = <300000>;
-			qcom,bimc,gp = <5>;
-			qcom,bimc,thmp = <50>;
+                        qcom,mode-thresh = "Fixed";
+                        qcom,thresh = <800000>;
+                        qcom,dual-conf;
+                        qcom,bimc,bw = <300000>;
+                        qcom,bimc,gp = <5000>;
+                        qcom,bimc,thmp = <50>;
 		};
 
 		mas-mss-proc {
@@ -1017,5 +1018,4 @@
 	};
 
 };
-
 

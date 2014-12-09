@@ -6,6 +6,8 @@
 
 wm97xx-ts-y := wm97xx-core.o
 
+#/*Add for aging test*/
+obj-$(CONFIG_HUAWEI_KERNEL) += hw_tp_common.o
 obj-$(CONFIG_TOUCHSCREEN_88PM860X)	+= 88pm860x-ts.o
 obj-$(CONFIG_TOUCHSCREEN_AD7877)	+= ad7877.o
 obj-$(CONFIG_TOUCHSCREEN_AD7879)	+= ad7879.o
@@ -79,7 +81,19 @@ obj-$(CONFIG_TOUCHSCREEN_MSM_LEGACY)		+= msm_touch.o
 obj-$(CONFIG_TOUCHSCREEN_CY8C_TS)	+= cy8c_ts.o
 obj-$(CONFIG_TOUCHSCREEN_CYTTSP_I2C_QC)       += cyttsp-i2c-qc.o
 obj-$(CONFIG_TOUCHSCREEN_FT5X06)	+= ft5x06_ts.o
-obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_I2C_RMI4)		+= synaptics_i2c_rmi4.o
-obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_RMI4_DEV)	+= synaptics_rmi_dev.o
-obj-$(CONFIG_TOUCHSCREEN_SYNAPTICS_DSX_FW_UPDATE) 	+= synaptics_fw_update.o
+obj-y	+= huawei_tp_adapter.o
+obj-$(CONFIG_GT9XX_TOUCHPANEL_DRIVER)	+= gt9xx_hw/
+obj-$(CONFIG_HUAWEI_SYNAPTICS_RMI_TOUCH) += synaptics_rmi_hw/ hw_tp_config.o
+
+
 obj-$(CONFIG_TOUCHSCREEN_GT9XX)		+= gt9xx/
+obj-y   += cypress/
+
+obj-$(CONFIG_TOUCHSCREEN_HUAWEI_FOCALTECH_FT6X06) += focaltech/
+obj-y	+= mstar/
+#/*Add synaptics new driver "Synaptics DSX I2C V2.0"*/
+obj-$(CONFIG_TOUCHSCREEN_HUAWEI_DSX_I2C) += synaptics_dsx_i2c.o
+obj-$(CONFIG_TOUCHSCREEN_HUAWEI_DSX_RMI_DEV) += synaptics_dsx_rmi_dev.o
+obj-$(CONFIG_TOUCHSCREEN_HUAWEI_DSX_FW_UPDATE) += synaptics_dsx_fw_update.o
+obj-$(CONFIG_TOUCHSCREEN_HUAWEI_DSX_TEST_REPORTING) += synaptics_dsx_test_reporting.o
+obj-$(CONFIG_TOUCHSCREEN_HUAWEI_DSX_PROXIMITY) += synaptics_dsx_proximity.o

@@ -67,7 +67,8 @@ struct wcd9xxx_core_resource {
 				unsigned short, u8);
 	int (*codec_bulk_read) (struct wcd9xxx_core_resource *,
 				unsigned short, int, u8 *);
-
+	int (*codec_bulk_write) (struct wcd9xxx_core_resource *,
+				unsigned short, int, u8 *);
 	/* Pointer to parent container data structure */
 	void *parent;
 
@@ -80,7 +81,9 @@ extern int wcd9xxx_core_res_init(
 	int (*codec_read)(struct wcd9xxx_core_resource *, unsigned short),
 	int (*codec_write)(struct wcd9xxx_core_resource *, unsigned short, u8),
 	int (*codec_bulk_read) (struct wcd9xxx_core_resource *, unsigned short,
-							int, u8 *));
+					int, u8 *),
+        int (*codec_bulk_write) (struct wcd9xxx_core_resource *, unsigned short,
+					int, u8 *));
 
 extern void wcd9xxx_core_res_deinit(
 	struct wcd9xxx_core_resource *);

@@ -41,6 +41,7 @@
 #include "../msm/qdsp6v2/q6core.h"
 #include "wcd9xxx-common.h"
 
+//merge the headset detect code from es4 baseline
 #define MSM8X10_WCD_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 |\
 			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_48000)
 #define MSM8X10_WCD_FORMATS (SNDRV_PCM_FMTBIT_S16_LE)
@@ -130,6 +131,7 @@ enum msm8x10_wcd_bandgap_type {
 	MSM8X10_WCD_BANDGAP_MBHC_MODE,
 };
 
+
 enum {
 	ON_DEMAND_MICBIAS = 0,
 	ON_DEMAND_CP,
@@ -141,10 +143,12 @@ enum {
  * Please add delay in the list in the future instead
  * of magic number
  */
+/* case number:01267375 */
 enum {
 	CODEC_DELAY_1_MS = 1000,
 	CODEC_DELAY_1_1_MS  = 1100,
 };
+
 
 struct hpf_work {
 	struct msm8x10_wcd_priv *msm8x10_wcd;
@@ -402,6 +406,32 @@ int msm8x10_wcd_reg_read(struct wcd9xxx_core_resource *core_res,
 	return __msm8x10_wcd_reg_read(msm8x10_wcd, reg);
 }
 EXPORT_SYMBOL(msm8x10_wcd_reg_read);
+
+static int __msm8x10_wcd_bulk_write(struct msm8x10_wcd *msm8x10_wcd,
+	unsigned short reg, int count, u8 *buf)
+{
+	int ret = -EINVAL;
+	mutex_lock(&msm8x10_wcd->io_lock);
+	if (MSM8X10_WCD_IS_HELICON_REG(reg))
+		ret = msm8x10_wcd_i2c_write(reg, count, buf);
+	else if (MSM8X10_WCD_IS_DINO_REG(reg))
+		ret = msm8x10_wcd_abh_write_device(msm8x10_wcd, reg,
+		buf, count);
+	if (ret < 0)
+		dev_err(msm8x10_wcd->dev,
+		"%s: codec bulk write failed\n", __func__);
+	mutex_unlock(&msm8x10_wcd->io_lock);
+	return ret;
+}
+
+int msm8x10_wcd_bulk_write(struct wcd9xxx_core_resource *core_res,
+	unsigned short reg, int count, u8 *buf)
+{
+	struct msm8x10_wcd *msm8x10_wcd =
+		(struct msm8x10_wcd *) core_res->parent;
+	return __msm8x10_wcd_bulk_write(msm8x10_wcd, reg, count, buf);
+}
+EXPORT_SYMBOL(msm8x10_wcd_bulk_write);
 
 static int __msm8x10_wcd_bulk_read(struct msm8x10_wcd *msm8x10_wcd,
 		unsigned short reg, int count, u8 *buf)
@@ -863,8 +893,18 @@ static int msm8x10_wcd_pa_gain_get(struct snd_kcontrol *kcontrol,
 
 	if (ear_pa_gain == 0x00) {
 		ucontrol->value.integer.value[0] = 0;
-	} else if (ear_pa_gain == 0x04) {
+	} else if (ear_pa_gain == 0x01) {
 		ucontrol->value.integer.value[0] = 1;
+	} else if (ear_pa_gain == 0x02) {
+		ucontrol->value.integer.value[0] = 2;
+	} else if (ear_pa_gain == 0x03) {
+		ucontrol->value.integer.value[0] = 3;
+	} else if (ear_pa_gain == 0x04) {
+		ucontrol->value.integer.value[0] = 4;
+	} else if (ear_pa_gain == 0x05) {
+		ucontrol->value.integer.value[0] = 5;
+	} else if (ear_pa_gain == 0x07) {
+		ucontrol->value.integer.value[0] = 6;
 	} else  {
 		dev_err(codec->dev, "%s: ERROR: Unsupported Ear Gain = 0x%x\n",
 			__func__, ear_pa_gain);
@@ -888,7 +928,22 @@ static int msm8x10_wcd_pa_gain_put(struct snd_kcontrol *kcontrol,
 		ear_pa_gain = 0x00;
 		break;
 	case 1:
+		ear_pa_gain = 0x20;
+		break;
+	case 2:
+		ear_pa_gain = 0x40;
+		break;
+	case 3:
+		ear_pa_gain = 0x60;
+		break;
+	case 4:
 		ear_pa_gain = 0x80;
+		break;
+	case 5:
+		ear_pa_gain = 0xA0;
+		break;
+	case 6:
+		ear_pa_gain = 0xE0;
 		break;
 	default:
 		return -EINVAL;
@@ -1095,9 +1150,9 @@ static int msm8x10_wcd_put_iir_band_audio_mixer(
 }
 
 static const char * const msm8x10_wcd_ear_pa_gain_text[] = {
-		"POS_6_DB", "POS_2_DB"};
+		"POS_6_DB","POS_4P5_DB","POS_3_DB","POS_1P5_DB","POS_0_DB","NEG_2P5_DB","NEG_12_DB"};
 static const struct soc_enum msm8x10_wcd_ear_pa_gain_enum[] = {
-		SOC_ENUM_SINGLE_EXT(2, msm8x10_wcd_ear_pa_gain_text),
+		SOC_ENUM_SINGLE_EXT(7, msm8x10_wcd_ear_pa_gain_text),
 };
 
 /*cut of frequency for high pass filter*/
@@ -1163,6 +1218,9 @@ static const struct snd_kcontrol_new msm8x10_wcd_snd_controls[] = {
 			  MSM8X10_WCD_A_CDC_IIR1_GAIN_B4_CTL,
 			  -84,	40, digital_gain),
 
+	SOC_SINGLE_TLV("ADC1 Volume", MSM8X10_WCD_A_TX_1_EN, 2, 19, 0, analog_gain),
+	SOC_SINGLE_TLV("ADC2 Volume", MSM8X10_WCD_A_TX_2_EN, 2, 19, 0, analog_gain),
+	SOC_SINGLE_TLV("ADC3 Volume", MSM8X10_WCD_A_TX_3_EN, 2, 19, 0, analog_gain),
 	SOC_ENUM("TX1 HPF cut off", cf_dec1_enum),
 	SOC_ENUM("TX2 HPF cut off", cf_dec2_enum),
 
@@ -1253,9 +1311,22 @@ static const char * const dec_mux_text[] = {
 	"ZERO", "ADC1", "ADC2", "DMIC1", "DMIC2"
 };
 
+
+/* case number:01267375 */
+/*
+static const char * const anc_mux_text[] = {
+	"ZERO", "ADC1", "ADC2", "ADC3", "ADC4", "ADC5", "ADC6", "ADC_MB",
+		"RSVD_1", "DMIC1", "DMIC2", "DMIC3", "DMIC4", "DMIC5", "DMIC6"
+};
+
+static const char * const anc1_fb_mux_text[] = {
+	"ZERO", "EAR_HPH_L", "EAR_LINE_1",
+};
+*/
+
 static const char * const adc2_mux_text[] = {
 	"ZERO", "INP2", "INP3"
-};
+ };
 
 static const char * const iir1_inp1_text[] = {
 	"ZERO", "DEC1", "DEC2", "RX1", "RX2", "RX3"
@@ -1308,12 +1379,16 @@ static const struct soc_enum iir1_inp1_mux_enum =
 	SOC_ENUM_SINGLE(MSM8X10_WCD_A_CDC_CONN_EQ1_B1_CTL, 0, 6,
 	iir1_inp1_text);
 
+
 static const struct soc_enum rx_rdac4_enum  =
 	SOC_ENUM_SINGLE(MSM8X10_WCD_A_CDC_CONN_LO_DAC_CTL, 0, 3,
 	rx_rdac4_text);
 
+
+/* case number:01267375 */
 static const struct soc_enum adc2_enum =
 	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(adc2_mux_text), adc2_mux_text);
+
 
 static const struct snd_kcontrol_new rx_mix1_inp1_mux =
 	SOC_DAPM_ENUM("RX1 MIX1 INP1 Mux", rx_mix1_inp1_chain_enum);
@@ -1344,7 +1419,7 @@ static const struct snd_kcontrol_new rx2_mix2_inp1_mux =
 
 static const struct snd_kcontrol_new rx_dac4_mux =
 	SOC_DAPM_ENUM("RDAC4 MUX Mux", rx_rdac4_enum);
-
+/* case number:01267375 */
 static const struct snd_kcontrol_new tx_adc2_mux =
 	SOC_DAPM_ENUM("ADC2 MUX Mux", adc2_enum);
 
@@ -1443,6 +1518,7 @@ static const struct snd_kcontrol_new spkr_switch[] = {
 	SOC_DAPM_SINGLE("Switch", MSM8X10_WCD_A_SPKR_DRV_DAC_CTL, 2, 1, 0)
 };
 
+/* merge qcom patch to solve the headset detect problem in FC baseline*/
 static void msm8x10_wcd_codec_enable_adc_block(struct snd_soc_codec *codec,
 					 int enable)
 {
@@ -1471,8 +1547,11 @@ static int msm8x10_wcd_codec_enable_adc(struct snd_soc_dapm_widget *w,
 
 	if (w->reg == MSM8X10_WCD_A_TX_1_EN)
 		init_bit_shift = 7;
+
+	/* case number:01267375 */
 	else if ((w->reg == MSM8X10_WCD_A_TX_2_EN) ||
 		 (w->reg == MSM8X10_WCD_A_TX_3_EN))
+
 		init_bit_shift = 6;
 	else {
 		dev_err(codec->dev, "%s: Error, invalid adc register\n",
@@ -1481,15 +1560,20 @@ static int msm8x10_wcd_codec_enable_adc(struct snd_soc_dapm_widget *w,
 	}
 
 	switch (event) {
+	/* case number:01267375 */
 	case SND_SOC_DAPM_PRE_PMU:
 		msm8x10_wcd_codec_enable_adc_block(codec, 1);
 		snd_soc_update_bits(codec, adc_reg, 1 << init_bit_shift,
 				1 << init_bit_shift);
 		usleep_range(CODEC_DELAY_1_MS, CODEC_DELAY_1_1_MS);
+
+
 		break;
 	case SND_SOC_DAPM_POST_PMU:
 		snd_soc_update_bits(codec, adc_reg, 1 << init_bit_shift, 0x00);
 		usleep_range(CODEC_DELAY_1_MS, CODEC_DELAY_1_1_MS);
+
+
 		break;
 	case SND_SOC_DAPM_POST_PMD:
 		msm8x10_wcd_codec_enable_adc_block(codec, 0);
@@ -2051,7 +2135,8 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"DEC2 MUX", "ADC2", "ADC2"},
 	{"DEC2 MUX", NULL, "CDC_CONN"},
 
-	{"ADC2", NULL, "ADC2 MUX"},
+    /* case number:01267375 */
+    {"ADC2", NULL, "ADC2 MUX"},
 	{"ADC2 MUX", "INP2", "ADC2_INP2"},
 	{"ADC2 MUX", "INP3", "ADC2_INP3"},
 
@@ -2059,6 +2144,7 @@ static const struct snd_soc_dapm_route audio_map[] = {
 	{"ADC1", NULL, "AMIC1"},
 	{"ADC2_INP2", NULL, "AMIC2"},
 	{"ADC2_INP3", NULL, "AMIC3"},
+
 
 	{"IIR1", NULL, "IIR1 INP1 MUX"},
 	{"IIR1 INP1 MUX", "DEC1", "DEC1 MUX"},
@@ -2276,6 +2362,13 @@ static int msm8x10_wcd_codec_enable_ear_pa(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *kcontrol, int event)
 {
 	switch (event) {
+	/* To avoid the pop nosie delay 20ms before PMU by case01396303 */
+	case SND_SOC_DAPM_PRE_PMU:
+		dev_dbg(w->codec->dev,
+			"%s: Sleeping 20ms before enabling EAR PA\n",
+			__func__);
+		msleep(20);
+		break;
 	case SND_SOC_DAPM_POST_PMU:
 		dev_dbg(w->codec->dev,
 			"%s: Sleeping 20ms after enabling EAR PA\n",
@@ -2296,8 +2389,11 @@ static const struct snd_soc_dapm_widget msm8x10_wcd_dapm_widgets[] = {
 	/*RX stuff */
 	SND_SOC_DAPM_OUTPUT("EAR"),
 
+	/* To avoid the pop nosie delay 20ms before PMU by case01396303 */
 	SND_SOC_DAPM_PGA_E("EAR PA", MSM8X10_WCD_A_RX_EAR_EN, 4, 0, NULL, 0,
-			msm8x10_wcd_codec_enable_ear_pa, SND_SOC_DAPM_POST_PMU),
+			msm8x10_wcd_codec_enable_ear_pa,
+			SND_SOC_DAPM_PRE_PMU |
+			SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
 
 	SND_SOC_DAPM_MIXER("DAC1", MSM8X10_WCD_A_RX_EAR_EN, 6, 0, dac1_switch,
 		ARRAY_SIZE(dac1_switch)),
@@ -2459,6 +2555,7 @@ static const struct snd_soc_dapm_widget msm8x10_wcd_dapm_widgets[] = {
 	SND_SOC_DAPM_ADC_E("ADC1", NULL, MSM8X10_WCD_A_TX_1_EN, 7, 0,
 		msm8x10_wcd_codec_enable_adc, SND_SOC_DAPM_PRE_PMU |
 		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
+    /* case number:01267375 */
 	SND_SOC_DAPM_ADC_E("ADC2_INP2", NULL, MSM8X10_WCD_A_TX_2_EN, 7, 0,
 		msm8x10_wcd_codec_enable_adc, SND_SOC_DAPM_PRE_PMU |
 		SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_POST_PMD),
@@ -3562,7 +3659,8 @@ static int __devinit msm8x10_wcd_i2c_probe(struct i2c_client *client,
 					MSM8X10_WCD_NUM_IRQ_REGS,
 					msm8x10_wcd_reg_read,
 					msm8x10_wcd_reg_write,
-					msm8x10_wcd_bulk_read);
+					msm8x10_wcd_bulk_read,
+					msm8x10_wcd_bulk_write);
 	if (wcd9xxx_core_irq_init(core_res)) {
 		dev_err(msm8x10->dev,
 				"%s: irq initialization failed\n", __func__);
@@ -3619,6 +3717,7 @@ static struct of_device_id msm8x10_wcd_of_match[] = {
 	{ },
 };
 
+/* qcom patch to solve headset detect after or in sleep mode */
 #ifdef CONFIG_PM
 static int msm8x10_wcd_i2c_resume(struct device *dev)
 {
@@ -3679,7 +3778,6 @@ static struct i2c_driver msm8x10_wcd_i2c_driver = {
 	.probe                  = msm8x10_wcd_i2c_probe,
 	.remove                 = __devexit_p(msm8x10_wcd_i2c_remove),
 };
-
 static int __init msm8x10_wcd_codec_init(void)
 {
 	int ret;
@@ -3705,4 +3803,3 @@ module_exit(msm8x10_wcd_codec_exit);
 MODULE_DESCRIPTION("MSM8x10 Audio codec driver");
 MODULE_LICENSE("GPL v2");
 MODULE_DEVICE_TABLE(i2c, msm8x10_wcd_id_table);
-

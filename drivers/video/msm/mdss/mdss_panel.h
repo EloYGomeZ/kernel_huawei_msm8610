@@ -16,12 +16,15 @@
 
 #include <linux/platform_device.h>
 #include <linux/types.h>
-
+#include <linux/msm_mdp.h>
 /* panel id type */
 struct panel_id {
 	u16 id;
 	u16 type;
 };
+#ifdef CONFIG_HUAWEI_KERNEL
+#define LOW_FRAME_RATE	30
+#endif
 
 #define DEFAULT_FRAME_RATE	60
 #define MDSS_DSI_RST_SEQ_LEN	10
@@ -302,12 +305,23 @@ struct mdss_panel_info {
 	struct ion_handle *splash_ihdl;
 	u32 panel_power_on;
 
+	/* Add two parameter */
+	const char *panel_name;
+	u32 bias_ic_enable;
+	u32 delaytime_before_bl;
+	u32 power_down_bkl_flag;
+#ifdef CONFIG_HUAWEI_LCD
+	u32 inversion_mode;
+#endif
 	uint32_t panel_dead;
 
 	struct lcd_panel_info lcdc;
 	struct fbc_panel_info fbc;
 	struct mipi_panel_info mipi;
 	struct lvds_panel_info lvds;
+#ifdef CONFIG_HUAWEI_KERNEL
+	bool huawei_dynamic_fps;
+#endif
 };
 
 struct mdss_panel_data {
@@ -330,6 +344,19 @@ struct mdss_panel_data {
 	int (*event_handler) (struct mdss_panel_data *pdata, int e, void *arg);
 
 	struct mdss_panel_data *next;
+#ifdef CONFIG_FB_AUTO_CABC
+    /* used to config cabc in terms of para:cabc_cfg*/
+    int (*config_cabc) (struct mdss_panel_data *pdata,struct msmfb_cabc_config cabc_cfg);
+#endif
+#ifdef CONFIG_FB_DISPLAY_INVERSION
+	int inversion_state;
+	int (*lcd_set_display_inversion)(struct mdss_panel_data *pdata,unsigned int inversion_mode);
+#endif
+#ifdef CONFIG_HUAWEI_LCD
+	int (*set_inversion_mode)(struct mdss_panel_data *pdata,u32 imode);
+#endif
+	/* Delete code that we don't use */
+
 };
 
 /**
@@ -347,6 +374,12 @@ static inline u32 mdss_panel_get_framerate(struct mdss_panel_info *panel_info)
 	case MIPI_VIDEO_PANEL:
 	case MIPI_CMD_PANEL:
 		frame_rate = panel_info->mipi.frame_rate;
+#ifdef CONFIG_HUAWEI_KERNEL
+		if(panel_info->huawei_dynamic_fps)
+		{
+			frame_rate = DEFAULT_FRAME_RATE;
+		}
+#endif
 		break;
 	case WRITEBACK_PANEL:
 		frame_rate = DEFAULT_FRAME_RATE;

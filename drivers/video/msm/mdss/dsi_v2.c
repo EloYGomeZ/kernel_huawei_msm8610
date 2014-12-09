@@ -52,6 +52,7 @@ static int dsi_on(struct mdss_panel_data *pdata)
 	return rc;
 }
 
+/* recreat lcd dts in fc1 baseline */
 static int dsi_panel_handler(struct mdss_panel_data *pdata, int enable)
 {
 	int rc = 0;
@@ -179,6 +180,26 @@ static int dsi_parse_gpio(struct platform_device *pdev,
 			pr_info("%s:%d, reset gpio not specified\n",
 							__func__, __LINE__);
 	}
+
+	/* read bias ic gpio from platform dtsi */
+#ifdef CONFIG_HUAWEI_LCD
+	ctrl_pdata->bias_enp_gpio = -1;
+	ctrl_pdata->bias_enn_gpio = -1;
+	if (ctrl_pdata->panel_data.panel_info.bias_ic_enable)
+	{
+		ctrl_pdata->bias_enp_gpio= of_get_named_gpio(np,
+					"huawei,platform-bias-enp-gpio", 0);
+		if (!gpio_is_valid(ctrl_pdata->bias_enp_gpio))
+			pr_err("%s:%d, bias enp gpio not specified\n",
+							__func__, __LINE__);
+
+		ctrl_pdata->bias_enn_gpio= of_get_named_gpio(np,
+						"huawei,platform-bias-enn-gpio", 0);
+		if (!gpio_is_valid(ctrl_pdata->bias_enn_gpio))
+			pr_err("%s:%d,bias enn gpio not specified\n",
+							__func__, __LINE__);	
+	}
+#endif
 	return 0;
 }
 
@@ -233,9 +254,44 @@ int dsi_ctrl_gpio_request(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 
 		ctrl_pdata->mode_gpio_requested = 1;
 	}
+#ifdef CONFIG_HUAWEI_LCD
+	if (ctrl_pdata->panel_data.panel_info.bias_ic_enable)
+	{
+		if (gpio_is_valid(ctrl_pdata->bias_enp_gpio)) {
+			rc = gpio_request(ctrl_pdata->bias_enp_gpio, "bias_enp");
+			if (rc)
+				goto gpio_request_err_add2;
+
+			ctrl_pdata->bias_enp_gpio_requested= 1;
+		}
+
+		if (gpio_is_valid(ctrl_pdata->bias_enn_gpio)) {
+			rc = gpio_request(ctrl_pdata->bias_enn_gpio, "bias_enn");
+			if (rc)
+				goto gpio_request_err_add1;
+
+			ctrl_pdata->bias_enn_gpio_requested= 1;
+		}
+
+	}
+#endif
 
 	return rc;
 
+#ifdef CONFIG_HUAWEI_LCD
+gpio_request_err_add1:
+	if (ctrl_pdata->panel_data.panel_info.bias_ic_enable)
+	{
+		if (gpio_is_valid(ctrl_pdata->bias_enp_gpio))
+		gpio_free(ctrl_pdata->bias_enp_gpio);
+	}
+gpio_request_err_add2:
+	if (ctrl_pdata->panel_data.panel_info.bias_ic_enable)
+	{
+		if (gpio_is_valid(ctrl_pdata->mode_gpio))
+		gpio_free(ctrl_pdata->mode_gpio);
+	}
+#endif
 gpio_request_err1:
 	if (gpio_is_valid(ctrl_pdata->disp_te_gpio))
 		gpio_free(ctrl_pdata->disp_te_gpio);
@@ -250,6 +306,13 @@ gpio_request_err4:
 	ctrl_pdata->rst_gpio_requested = 0;
 	ctrl_pdata->disp_te_gpio_requested = 0;
 	ctrl_pdata->mode_gpio_requested = 0;
+#ifdef CONFIG_HUAWEI_LCD
+	if (ctrl_pdata->panel_data.panel_info.bias_ic_enable)
+	{
+		ctrl_pdata->bias_enp_gpio_requested= 0;
+		ctrl_pdata->bias_enn_gpio_requested= 0;
+	}
+#endif
 	return rc;
 }
 
@@ -271,6 +334,21 @@ void dsi_ctrl_gpio_free(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 		gpio_free(ctrl_pdata->mode_gpio);
 		ctrl_pdata->mode_gpio_requested = 0;
 	}
+
+#ifdef CONFIG_HUAWEI_LCD
+	if (ctrl_pdata->panel_data.panel_info.bias_ic_enable)
+	{
+		if (ctrl_pdata->bias_enp_gpio_requested) {
+			gpio_free(ctrl_pdata->bias_enp_gpio);
+			ctrl_pdata->bias_enp_gpio_requested = 0;
+		}
+
+		if (ctrl_pdata->bias_enn_gpio_requested) {
+			gpio_free(ctrl_pdata->bias_enn_gpio);
+			ctrl_pdata->bias_enn_gpio_requested = 0;
+		}
+	}
+#endif
 }
 
 static int dsi_parse_vreg(struct device *dev, struct dss_module_power *mp)

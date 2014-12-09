@@ -30,8 +30,12 @@
 #include "mdss_panel.h"
 #include "mdss_mdp.h"
 
-#define STATUS_CHECK_INTERVAL 5000
+//add patch from  qcom
+#include "mdp3.h"
 
+#define STATUS_CHECK_INTERVAL 5000
+//add patch from  qcom
+#define MDP3_HW_VERSION	0x03040310
 struct dsi_status_data {
 	struct notifier_block fb_notifier;
 	struct delayed_work check_status;
@@ -40,6 +44,81 @@ struct dsi_status_data {
 };
 struct dsi_status_data *pstatus_data;
 static uint32_t interval = STATUS_CHECK_INTERVAL;
+//add patch from  qcom
+int check_dsi_v2_status(void)
+{
+	struct mdss_panel_data *pdata = NULL;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+	int ret = 0;
+
+	pdata = dev_get_platdata(&pstatus_data->mfd->pdev->dev);
+	if (!pdata) {
+		pr_err("%s: Panel data not available\n", __func__);
+		return -EPERM;
+	}
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+								panel_data);
+	if (!ctrl_pdata || !ctrl_pdata->check_status) {
+		pr_err("%s: DSI ctrl or status_check callback not avilable\n",
+								__func__);
+		return -EPERM;
+	}
+
+	ret = ctrl_pdata->check_status(ctrl_pdata);
+
+	return ret;
+}
+
+int check_dsi_6g_status(void)
+{
+	struct mdss_panel_data *pdata = NULL;
+	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
+	struct mdss_overlay_private *mdp5_data = NULL;
+	struct mdss_mdp_ctl *ctl = NULL;
+	int ret = 0;
+
+	pdata = dev_get_platdata(&pstatus_data->mfd->pdev->dev);
+	if (!pdata) {
+		pr_err("%s: Panel data not available\n", __func__);
+		return -EPERM;
+	}
+	ctrl_pdata = container_of(pdata, struct mdss_dsi_ctrl_pdata,
+								panel_data);
+	if (!ctrl_pdata || !ctrl_pdata->check_status) {
+		pr_err("%s: DSI ctrl or status_check callback not avilable\n",
+								__func__);
+		return -EPERM;
+	}
+
+	mdp5_data = mfd_to_mdp5_data(pstatus_data->mfd);
+	ctl = mfd_to_ctl(pstatus_data->mfd);
+
+	if (ctl->shared_lock)
+		mutex_lock(ctl->shared_lock);
+	mutex_lock(&mdp5_data->ov_lock);
+
+	/* For the command mode panels, we return pan display
+	* IOCTL on vsync interrupt. So, after vsync interrupt comes
+	* and when DMA_P is in progress, if the panel stops responding
+	* and if we trigger BTA before DMA_P finishes, then the DSI
+	* FIFO will not be cleared since the DSI data bus control
+	* doesn't come back to the host after BTA. This may cause the
+	* display reset not to be proper. Hence, wait for DMA_P done
+	* for command mode panels before triggering BTA.*/
+	if (ctl->wait_pingpong)
+		ctl->wait_pingpong(ctl, NULL);
+
+	pr_debug("%s: DSI ctrl wait for ping pong done\n", __func__);
+
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
+	ret = ctrl_pdata->check_status(ctrl_pdata);
+	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
+
+	mutex_unlock(&mdp5_data->ov_lock);
+	if (ctl->shared_lock)
+		mutex_unlock(ctl->shared_lock);
+	return ret;
+}
 
 /*
  * check_dsi_ctrl_status() - Check DSI controller status periodically.
@@ -54,8 +133,7 @@ static void check_dsi_ctrl_status(struct work_struct *work)
 	struct dsi_status_data *pdsi_status = NULL;
 	struct mdss_panel_data *pdata = NULL;
 	struct mdss_dsi_ctrl_pdata *ctrl_pdata = NULL;
-	struct mdss_overlay_private *mdp5_data = NULL;
-	struct mdss_mdp_ctl *ctl = NULL;
+	//delete code according qcom patch
 	int ret = 0;
 
 	pdsi_status = container_of(to_delayed_work(work),
@@ -78,37 +156,20 @@ static void check_dsi_ctrl_status(struct work_struct *work)
 								__func__);
 		return;
 	}
+#ifdef CONFIG_HUAWEI_LCD
+	/*if panel not set esd check commands in dtsi,we do not check bta*/
+	if(!ctrl_pdata->esd_check_enable)
+	{
+		pr_info("%s: ctrl_pdata->esd_check_enable = %d,not check mipi bta!\n", __func__,(int)ctrl_pdata->esd_check_enable);
+		return;
+	}
 
-	mdp5_data = mfd_to_mdp5_data(pdsi_status->mfd);
-	ctl = mfd_to_ctl(pdsi_status->mfd);
-
-	if (ctl->shared_lock)
-		mutex_lock(ctl->shared_lock);
-	mutex_lock(&mdp5_data->ov_lock);
-
-	/*
-	 * For the command mode panels, we return pan display
-	 * IOCTL on vsync interrupt. So, after vsync interrupt comes
-	 * and when DMA_P is in progress, if the panel stops responding
-	 * and if we trigger BTA before DMA_P finishes, then the DSI
-	 * FIFO will not be cleared since the DSI data bus control
-	 * doesn't come back to the host after BTA. This may cause the
-	 * display reset not to be proper. Hence, wait for DMA_P done
-	 * for command mode panels before triggering BTA.
-	 */
-	if (ctl->wait_pingpong)
-		ctl->wait_pingpong(ctl, NULL);
-
-	pr_debug("%s: DSI ctrl wait for ping pong done\n", __func__);
-
-	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_ON, false);
-	ret = ctrl_pdata->check_status(ctrl_pdata);
-	mdss_mdp_clk_ctrl(MDP_BLOCK_POWER_OFF, false);
-
-	mutex_unlock(&mdp5_data->ov_lock);
-	if (ctl->shared_lock)
-		mutex_unlock(ctl->shared_lock);
-
+#endif
+	//add patch from  qcom
+	if (mdp3_res && mdp3_res->mdp_rev == MDP3_HW_VERSION)
+		ret = check_dsi_v2_status();
+	else
+		ret = check_dsi_6g_status();
 	if ((pdsi_status->mfd->panel_power_on)) {
 		if (ret > 0) {
 			schedule_delayed_work(&pdsi_status->check_status,

@@ -249,11 +249,20 @@ static int lowmem_shrink(struct shrinker *s, struct shrink_control *sc)
 	other_free = global_page_state(NR_FREE_PAGES);
 
 	if (global_page_state(NR_SHMEM) + total_swapcache_pages <
-		global_page_state(NR_FILE_PAGES))
+		global_page_state(NR_FILE_PAGES)) {
 		other_file = global_page_state(NR_FILE_PAGES) -
 						global_page_state(NR_SHMEM) -
 						total_swapcache_pages;
-	else
+
+
+    /*
+     * subtract swapcache to other_file
+     
+     */
+#if defined(CONFIG_SWAP)
+    other_file -= (int)total_swapcache_pages;
+#endif
+	} else
 		other_file = 0;
 
 	tune_lmk_param(&other_free, &other_file, sc);

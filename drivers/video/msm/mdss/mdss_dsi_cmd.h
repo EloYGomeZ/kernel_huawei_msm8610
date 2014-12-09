@@ -92,13 +92,16 @@ struct dsi_cmd_desc {
 	struct dsi_ctrl_hdr dchdr;
 	char *payload;
 };
-
+struct dsi_rx_cmd_desc {
+	u8 elen;/*8 bits*/
+	char *excpet_result;
+};
 #define CMD_REQ_MAX     4
 #define CMD_REQ_RX      0x0001
 #define CMD_REQ_COMMIT  0x0002
 #define CMD_CLK_CTRL    0x0004
 #define CMD_REQ_NO_MAX_PKT_SIZE 0x0008
-
+#define CMD_REQ_LP_MODE 0x0010
 struct dcs_cmd_req {
 	struct dsi_cmd_desc *cmds;
 	int cmds_cnt;

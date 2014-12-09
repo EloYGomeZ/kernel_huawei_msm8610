@@ -16,7 +16,9 @@ ifeq ($(CONFIG_FB_MSM_MDSS),y)
 obj-$(CONFIG_DEBUG_FS) += mdss_debug.o
 endif
 
-dsi-v2-objs = dsi_v2.o dsi_host_v2.o dsi_io_v2.o
+#add patch from qcom
+dsi-v2-objs = dsi_v2.o dsi_host_v2.o dsi_io_v2.o mdss_dsi_status.o
+
 obj-$(CONFIG_FB_MSM_MDSS) += dsi-v2.o
 
 mdss-dsi-objs := mdss_dsi.o mdss_dsi_host.o mdss_dsi_cmd.o
@@ -42,4 +44,8 @@ obj-$(CONFIG_FB_MSM_QPIC_ILI_QVGA_PANEL) += qpic_panel_ili_qvga.o
 
 obj-$(CONFIG_FB_MSM_MDSS) += mdss_fb.o
 
+#/* recreat lcd dts in fc1 baseline */
+obj-$(CONFIG_HUAWEI_LCD) += hw_lcd_debug.o hw_lcd_common.o
+
 obj-$(CONFIG_FB_MSM_MDSS_DSI_CTRL_STATUS) += mdss_dsi_status.o
+

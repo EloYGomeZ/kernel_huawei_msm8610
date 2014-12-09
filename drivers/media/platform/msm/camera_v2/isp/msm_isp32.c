@@ -22,7 +22,8 @@
 #include "msm.h"
 #include "msm_camera_io_util.h"
 
-#define VFE32_BURST_LEN 2
+/*merge qcom case 1404498 SBA_M8610AAAAANLYD1130.2 _JPEG_incomplete_Huawei.zip*/
+#define VFE32_BURST_LEN 3
 #define VFE32_UB_SIZE 1024
 #define VFE32_EQUAL_SLICE_UB 194
 #define VFE32_AXI_SLICE_UB 792
@@ -40,7 +41,13 @@
 	(VFE32_STATS_BASE(idx) + 0x4 * \
 	(~(ping_pong >> (idx + VFE32_STATS_PING_PONG_OFFSET)) & 0x1))
 
+#ifdef CONFIG_HUAWEI_KERNEL_CAMERA
+#define HW_MAX_SOF_LOG_NUM 5
+static int log_print_num = 0;
+#endif
 #define VFE32_CLK_IDX 0
+/*merge qcom case 1404498 SBA_M8610AAAAANLYD1130.2 _JPEG_incomplete_Huawei.zip*/
+#define MSM_ISP32_TOTAL_WM_UB 792
 static struct msm_cam_clk_info msm_vfe32_1_clk_info[] = {
 	/*vfe32 clock info for B-family: 8610 */
 	{"vfe_clk_src", 266670000},
@@ -173,7 +180,15 @@ static void msm_vfe32_process_camif_irq(struct vfe_device *vfe_dev,
 		return;
 
 	if (irq_status0 & BIT(0)) {
+#ifdef CONFIG_HUAWEI_KERNEL_CAMERA
+		if(log_print_num > 0)
+		{
+			log_print_num--;
+			pr_info("%s: SOF IRQ %d\n", __func__,log_print_num);
+		}
+#else
 		ISP_DBG("%s: SOF IRQ\n", __func__);
+#endif
 		if (vfe_dev->axi_data.src_info[VFE_PIX_0].raw_stream_count > 0
 			&& vfe_dev->axi_data.src_info[VFE_PIX_0].
 			pix_stream_count == 0) {
@@ -367,6 +382,11 @@ static long msm_vfe32_reset_hardware(struct vfe_device *vfe_dev)
 {
 	init_completion(&vfe_dev->reset_complete);
 	msm_camera_io_w_mb(0x3FF, vfe_dev->vfe_base + 0x4);
+#ifdef CONFIG_HUAWEI_KERNEL_CAMERA
+	pr_info("%s: \n",__func__);
+	//we print 5 times when camera stream on
+	log_print_num = HW_MAX_SOF_LOG_NUM;
+#endif
 	return wait_for_completion_interruptible_timeout(
 	   &vfe_dev->reset_complete, msecs_to_jiffies(50));
 }
@@ -620,6 +640,7 @@ static void msm_vfe32_update_camif_state(
 		msm_camera_io_w_mb(0x0, vfe_dev->vfe_base + 0x1E0);
 		vfe_dev->axi_data.src_info[VFE_PIX_0].active = 0;
 	} else if (update_state == DISABLE_CAMIF_IMMEDIATELY) {
+	/* case:01493906 patch:SBA_M8610AAAAANLYD1935.1_KPI_isp_reset_Huawei*/
 		msm_camera_io_w_mb(0x6, vfe_dev->vfe_base + 0x1E0);
 		vfe_dev->hw_info->vfe_ops.axi_ops.halt(vfe_dev);
 		vfe_dev->hw_info->vfe_ops.core_ops.reset_hw(vfe_dev);
@@ -772,7 +793,44 @@ static void msm_vfe32_axi_clear_wm_xbar_reg(
 	msm_camera_io_w(xbar_reg_cfg, vfe_dev->vfe_base + VFE32_XBAR_BASE(wm));
 }
 
-static void msm_vfe32_cfg_axi_ub(struct vfe_device *vfe_dev)
+/*merge qcom case 1404498 SBA_M8610AAAAANLYD1130.2 _JPEG_incomplete_Huawei.zip*/
+static void msm_vfe32_cfg_axi_ub_equal_default(struct vfe_device *vfe_dev)
+{
+	int i;
+	uint32_t ub_offset = 0;
+	struct msm_vfe_axi_shared_data *axi_data = &vfe_dev->axi_data;
+	uint32_t total_image_size = 0;
+	uint32_t num_used_wms = 0;
+	uint32_t prop_size = 0;
+	uint32_t wm_ub_size;
+	uint64_t delta;
+	for (i = 0; i < axi_data->hw_info->num_wm; i++) {
+		if (axi_data->free_wm[i] > 0) {
+			num_used_wms++;
+			total_image_size += axi_data->wm_image_size[i];
+		}
+	}
+	prop_size = MSM_ISP32_TOTAL_WM_UB -
+		axi_data->hw_info->min_wm_ub * num_used_wms;
+	for (i = 0; i < axi_data->hw_info->num_wm; i++) {
+		if (axi_data->free_wm[i]) {
+			delta =
+				(uint64_t)(axi_data->wm_image_size[i] *
+					prop_size);
+			do_div(delta, total_image_size);
+			wm_ub_size = axi_data->hw_info->min_wm_ub +
+				(uint32_t)delta;
+			msm_camera_io_w(ub_offset << 16 |
+				(wm_ub_size - 1), vfe_dev->vfe_base +
+					VFE32_WM_BASE(i) + 0xC);
+			ub_offset += wm_ub_size;
+		} else
+			msm_camera_io_w(0,
+				vfe_dev->vfe_base + VFE32_WM_BASE(i) + 0xC);
+	}
+}
+
+static void msm_vfe32_cfg_axi_ub_equal_slicing(struct vfe_device *vfe_dev)
 {
 	int i;
 	uint32_t ub_offset = 0;
@@ -794,6 +852,15 @@ static void msm_vfe32_cfg_axi_ub(struct vfe_device *vfe_dev)
 	}
 }
 
+static void msm_vfe32_cfg_axi_ub(struct vfe_device *vfe_dev)
+{
+	struct msm_vfe_axi_shared_data *axi_data = &vfe_dev->axi_data;
+	axi_data->wm_ub_cfg_policy = MSM_WM_UB_CFG_DEFAULT;
+	if (axi_data->wm_ub_cfg_policy == MSM_WM_UB_EQUAL_SLICING)
+		msm_vfe32_cfg_axi_ub_equal_slicing(vfe_dev);
+	else
+		msm_vfe32_cfg_axi_ub_equal_default(vfe_dev);
+}
 static void msm_vfe32_update_ping_pong_addr(struct vfe_device *vfe_dev,
 		uint8_t wm_idx, uint32_t pingpong_status, unsigned long paddr)
 {
@@ -1054,6 +1121,8 @@ struct msm_vfe_axi_hardware_info msm_vfe32_axi_hw_info = {
 	.num_comp_mask = 3,
 	.num_rdi = 3,
 	.num_rdi_master = 3,
+	/*merge qcom case 1404498 SBA_M8610AAAAANLYD1130.2 _JPEG_incomplete_Huawei.zip*/
+	.min_wm_ub = 64,
 };
 
 static struct msm_vfe_stats_hardware_info msm_vfe32_stats_hw_info = {

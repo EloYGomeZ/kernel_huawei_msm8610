@@ -256,12 +256,6 @@ void deactivate_locked_super(struct super_block *s)
 
 		/* caches are now gone, we can safely kill the shrinker now */
 		unregister_shrinker(&s->s_shrink);
-
-		/*
-		 * We need to call rcu_barrier so all the delayed rcu free
-		 * inodes are flushed before we release the fs module.
-		 */
-		rcu_barrier();
 		put_filesystem(fs);
 		put_super(s);
 	} else {
@@ -786,11 +780,9 @@ cancel_readonly:
 	sb->s_readonly_remount = 0;
 	return retval;
 }
-
 static void do_emergency_remount(struct work_struct *work)
 {
 	struct super_block *sb, *p = NULL;
-
 	spin_lock(&sb_lock);
 	list_for_each_entry(sb, &super_blocks, s_list) {
 		if (hlist_unhashed(&sb->s_instances))
@@ -818,10 +810,16 @@ static void do_emergency_remount(struct work_struct *work)
 	printk("Emergency Remount complete\n");
 }
 
+#ifdef CONFIG_HW_SYSTEM_WR_PROTECT
+extern int blk_set_ro_secure_debuggable(int state);
+#endif
+
 void emergency_remount(void)
 {
 	struct work_struct *work;
-
+#ifdef CONFIG_HW_SYSTEM_WR_PROTECT	
+    blk_set_ro_secure_debuggable(0);
+#endif	
 	work = kmalloc(sizeof(*work), GFP_ATOMIC);
 	if (work) {
 		INIT_WORK(work, do_emergency_remount);

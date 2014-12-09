@@ -354,11 +354,11 @@ void mdp3_ppp_kickoff(void)
 
 	mdp3_ppp_pipe_wait();
 }
-
+  /* keep the cose same as qcom baseline */
 int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
 {
 	struct mdss_panel_info *panel_info = mfd->panel_info;
-	uint64_t ab = 0, ib = 0;
+    uint64_t ab = 0, ib = 0;
 	int rate = 0;
 	int rc;
 
@@ -372,21 +372,24 @@ int mdp3_ppp_turnon(struct msm_fb_data_type *mfd, int on_off)
 		ib = (ab * 3) / 2;
 	}
 	mdp3_clk_set_rate(MDP3_CLK_CORE, rate, MDP3_CLIENT_PPP);
+
 	rc = mdp3_clk_enable(on_off, 0);
+
 	if (rc < 0) {
 		pr_err("%s: mdp3_clk_enable failed\n", __func__);
 		return rc;
 	}
 	rc = mdp3_bus_scale_set_quota(MDP3_CLIENT_PPP, ab, ib);
 	if (rc < 0) {
+
 		mdp3_clk_enable(!on_off, 0);
+
 		pr_err("%s: scale_set_quota failed\n", __func__);
 		return rc;
 	}
 	ppp_stat->bw_on = on_off;
 	return 0;
 }
-
 void mdp3_start_ppp(struct ppp_blit_op *blit_op)
 {
 	/* Wait for the pipe to clear */
@@ -837,20 +840,19 @@ int mdp3_ppp_start_blit(struct msm_fb_data_type *mfd,
 	}
 	if (unlikely(req->dst_rect.h == 0 || req->dst_rect.w == 0))
 		return 0;
-
 	if (req->flags & MDP_ROT_90) {
 		if (((req->dst_rect.h == 1) && ((req->src_rect.w != 1) ||
-			(req->dst_rect.w != req->src_rect.h))) ||
+			(req->dst_rect.w == req->src_rect.h))) ||
 			((req->dst_rect.w == 1) && ((req->src_rect.h != 1) ||
-			(req->dst_rect.h != req->src_rect.w)))) {
+			(req->dst_rect.h == req->src_rect.w)))) {
 			pr_err("mdp_ppp: error scaling when size is 1!\n");
 			return -EINVAL;
 		}
 	} else {
 		if (((req->dst_rect.w == 1) && ((req->src_rect.w != 1) ||
-			(req->dst_rect.h != req->src_rect.h))) ||
+			(req->dst_rect.h == req->src_rect.h))) ||
 			((req->dst_rect.h == 1) && ((req->src_rect.h != 1) ||
-			(req->dst_rect.w != req->src_rect.w)))) {
+			(req->dst_rect.w == req->src_rect.w)))) {
 			pr_err("mdp_ppp: error scaling when size is 1!\n");
 			return -EINVAL;
 		}

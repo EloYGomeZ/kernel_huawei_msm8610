@@ -197,13 +197,14 @@ static uint32_t msm_isp_axi_get_plane_size(
 		plane_cfg[plane_idx].output_width;
 		break;
 	case V4L2_PIX_FMT_NV12:
+	/*merge qcom case 1404498 SBA_M8610AAAAANLYD1130.2 _JPEG_incomplete_Huawei.zip*/
 	case V4L2_PIX_FMT_NV21:
 		if (plane_cfg[plane_idx].output_plane_format == Y_PLANE)
 			size = plane_cfg[plane_idx].output_height *
 				plane_cfg[plane_idx].output_width;
 		else
 			size = plane_cfg[plane_idx].output_height *
-				plane_cfg[plane_idx].output_width / 2;
+				plane_cfg[plane_idx].output_width;
 		break;
 	case V4L2_PIX_FMT_NV14:
 	case V4L2_PIX_FMT_NV41:
@@ -212,7 +213,7 @@ static uint32_t msm_isp_axi_get_plane_size(
 				plane_cfg[plane_idx].output_width;
 		else
 			size = plane_cfg[plane_idx].output_height *
-				plane_cfg[plane_idx].output_width / 8;
+				plane_cfg[plane_idx].output_width;
 		break;
 	case V4L2_PIX_FMT_NV16:
 	case V4L2_PIX_FMT_NV61:
@@ -318,6 +319,7 @@ int msm_isp_axi_check_stream_state(
 				stream_info->state == PAUSED ||
 				stream_info->state == RESUME_PENDING ||
 				stream_info->state == RESUMING) &&
+				/* case:01493906 patch:SBA_M8610AAAAANLYD1935.1_KPI_isp_reset_Huawei*/
 				(stream_cfg_cmd->cmd == STOP_STREAM ||
 				stream_cfg_cmd->cmd == STOP_IMMEDIATELY)) {
 				stream_info->state = ACTIVE;
@@ -654,7 +656,8 @@ void msm_isp_axi_stream_update(struct vfe_device *vfe_dev)
 				ACTIVE : INACTIVE;
 		}
 	}
-
+	
+	/* case:01493906 patch:SBA_M8610AAAAANLYD1935.1_KPI_isp_reset_Huawei*/
 	if (vfe_dev->axi_data.pipeline_update == DISABLE_CAMIF ||
 		(vfe_dev->axi_data.pipeline_update ==
 		DISABLE_CAMIF_IMMEDIATELY)) {
@@ -868,6 +871,7 @@ static enum msm_isp_camif_update_state
 			(cur_pix_stream_cnt - pix_stream_cnt) == 0 &&
 			stream_cfg_cmd->cmd == STOP_STREAM)
 			return DISABLE_CAMIF;
+		/* case:01493906 patch:SBA_M8610AAAAANLYD1935.1_KPI_isp_reset_Huawei*/	
 		else if (cur_pix_stream_cnt &&
 			(cur_pix_stream_cnt - pix_stream_cnt) == 0 &&
 			stream_cfg_cmd->cmd == STOP_IMMEDIATELY)
@@ -1183,6 +1187,7 @@ static int msm_isp_stop_axi_stream(struct vfe_device *vfe_dev,
 	if (camif_update == DISABLE_CAMIF)
 		vfe_dev->hw_info->vfe_ops.core_ops.
 			update_camif_state(vfe_dev, DISABLE_CAMIF);
+	/* case:01493906 patch:SBA_M8610AAAAANLYD1935.1_KPI_isp_reset_Huawei*/	
 	else if (camif_update == DISABLE_CAMIF_IMMEDIATELY)
 		vfe_dev->hw_info->vfe_ops.core_ops.
 			update_camif_state(vfe_dev, DISABLE_CAMIF_IMMEDIATELY);

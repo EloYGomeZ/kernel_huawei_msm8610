@@ -2924,7 +2924,7 @@ static struct clk_lookup msm_clocks_8610[] = {
 	CLK_LOOKUP("core_clk",                  gcc_ce1_clk.c, ""),
 	CLK_LOOKUP("iface_clk",       gcc_copss_smmu_ahb_clk.c, ""),
 	CLK_LOOKUP("iface_clk",        gcc_lpss_smmu_ahb_clk.c, ""),
-	CLK_LOOKUP("core_clk",                  gcc_gp1_clk.c, "0-000e"),
+	CLK_LOOKUP("nfc_clk",                  gcc_gp1_clk.c, "0-0077"),
 	CLK_LOOKUP("core_clk",                  gcc_gp2_clk.c, ""),
 	CLK_LOOKUP("core_clk",                  gcc_gp3_clk.c, ""),
 	CLK_LOOKUP("core_clk",         gcc_lpass_q6_axi_clk.c, ""),
@@ -3022,22 +3022,61 @@ static struct clk_lookup msm_clocks_8610[] = {
 	CLK_LOOKUP("core_clk",         pnoc_iommu_clk.c, "fd010000.qcom,iommu"),
 
 	/* MM sensor clocks */
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006e"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-006e"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0030"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0030"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0032"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0032"),	      
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006f"),
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0034"),
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-007d"),
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006d"),
 	CLK_LOOKUP("cam_src_clk", mclk1_clk_src.c, "6-0078"),
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0020"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006c"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006b"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-005a"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0040"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0026"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0022"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0024"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0068"),	
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0062"),		
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-007a"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0028"),
 	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-006a"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0066"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0064"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0030"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-003a"),	
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0060"),
+	CLK_LOOKUP("cam_src_clk", mclk0_clk_src.c, "6-0061"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0060"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0061"),
 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-006f"),
 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0034"),
 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-007d"),
 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-006d"),
 	CLK_LOOKUP("cam_clk", mclk1_clk.c, "6-0078"),
 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0020"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-006c"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-006b"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-005a"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0040"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0026"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0022"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0024"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0068"),  	
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0062"),  	
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-007a"),
+	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0028"),
 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-006a"),
-
-
+ 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0066"),
+ 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0064"),
+ 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-0030"),
+ 	CLK_LOOKUP("cam_clk", mclk0_clk.c, "6-003a"),
+	
 	/* CSIPHY clocks */
 	CLK_LOOKUP("csiphy_timer_src_clk", csi0phytimer_clk_src.c,
 		"fda00c00.qcom,csiphy"),
@@ -3269,6 +3308,21 @@ static void __init msm8610_clock_post_init(void)
 	clk_set_rate(&mclk1_clk_src.c, mclk1_clk_src.freq_tbl[0].freq_hz);
 }
 
+#ifdef CONFIG_HUAWEI_KERNEL
+/*turn on NFC clock*/
+void nfc_clk_on(void)
+{
+	uint32_t reg_clkctl;
+
+	//GP1_CBCR is NFC clock
+	reg_clkctl = readl_relaxed(GCC_REG_BASE(GP1_CBCR));
+
+	/*turn on NFC clock:set Bit0 to 1, this bitfield indicated if the clock branch is enabled.*/
+	reg_clkctl |= 0x1;
+
+	writel_relaxed(reg_clkctl, GCC_REG_BASE(GP1_CBCR));
+}
+#endif
 static void dsi_init(void)
 {
 	dsi_byte_clk_src_ops = clk_ops_rcg;

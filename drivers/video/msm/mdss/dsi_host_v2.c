@@ -26,6 +26,8 @@
 #include "dsi_io_v2.h"
 #include "dsi_host_v2.h"
 #include "mdss_debug.h"
+#include <mdss_dsi.h>
+#include <linux/hw_lcd_common.h>
 
 #define DSI_POLL_SLEEP_US 1000
 #define DSI_POLL_TIMEOUT_US 16000
@@ -36,6 +38,25 @@
 #define DSI_SHORT_PKT_DATA_SIZE 2
 #define DSI_MAX_BYTES_TO_READ 16
 
+#ifdef CONFIG_HUAWEI_KERNEL
+#define MDSS_DSI_0_FIFO_EMPTY_STATUS 0x11111000  //empty status
+#define DSI_MAX_DIVIDER 256 //define in clock-dsi-8610.c
+#define DFS_VCO_CLK_MIN 600000000 //const define in dsi_vco of clock-8610.c
+#define DFS_VCO_CLK_MAX 1200000000 //const define in dsi_vco of clock-8610.c
+#define PREF_DIV_RATIO 26 //const define in dsi_vco of clock-8610.c
+#define MDSS_FPS_WAIT_MS    10       //wait 10ms for redo the mipi settings
+#define MDSS_FPS_START_MS    0
+struct mutex mdss_fps_mutexlock;//mutex lock flag
+static struct workqueue_struct *mdp_dynamic_frame_rate_wq; //change fps workqueue
+static struct delayed_work mdp_dynamic_frame_rate_worker;//worker
+struct dsiphy_pll_divider_config dsi_pll_divider_config;//mipi pll config
+int mdss_change_fps_error_flag = false;  //true means FIFO not empty
+int mdss_dsi_set_fps_flag = false;//use for mdss_dsi_isr. means the isr is for change fps
+void mdss_change_fps(void);
+#endif  //CONFIG_HUAWEI_KERNEL
+//define the globle var esd_bta_flag in another file
+extern int esd_bta_flag;
+extern struct mutex bta_read;
 struct dsi_host_v2_private {
 	int irq_no;
 	unsigned char *dsi_base;
@@ -45,6 +66,9 @@ struct dsi_host_v2_private {
 	int dsi_on;
 
 	void (*debug_enable_clk)(int on);
+#ifdef CONFIG_HUAWEI_KERNEL
+    struct mdss_dsi_ctrl_pdata *ctrl_pdata;//init in probe
+#endif  //CONFIG_HUAWEI_KERNEL
 };
 
 static struct dsi_host_v2_private *dsi_host_private;
@@ -213,12 +237,25 @@ irqreturn_t msm_dsi_isr_handler(int irq, void *ptr)
 	spin_lock(&ctrl->mdp_lock);
 
 	if (isr & DSI_INTR_VIDEO_DONE)
+#ifdef CONFIG_HUAWEI_KERNEL
+    {
+        if(mdss_dsi_set_fps_flag)
+        {
+            mdss_change_fps();
+        }
+#endif  //CONFIG_HUAWEI_KERNEL
 		complete(&ctrl->video_comp);
+#ifdef CONFIG_HUAWEI_KERNEL
+    }
+#endif  //CONFIG_HUAWEI_KERNEL
 
 	if (isr & DSI_INTR_CMD_DMA_DONE)
 		complete(&ctrl->dma_comp);
 
 	spin_unlock(&ctrl->mdp_lock);
+	//add patch from qcom
+	if (isr & DSI_INTR_BTA_DONE)
+		complete(&ctrl->bta_comp);
 
 	return IRQ_HANDLED;
 }
@@ -469,12 +506,15 @@ void msm_dsi_controller_cfg(int enable)
 	pr_debug("msm_dsi_controller_cfg\n");
 
 	/* Check for CMD_MODE_DMA_BUSY */
+	//do sw_reset when DSI status error
 	if (readl_poll_timeout((ctrl_base + DSI_STATUS),
 				status,
 				((status & 0x02) == 0),
-				DSI_POLL_SLEEP_US, DSI_POLL_TIMEOUT_US))
+				DSI_POLL_SLEEP_US, DSI_POLL_TIMEOUT_US)){
 		pr_err("%s: DSI status=%x failed\n", __func__, status);
-
+		pr_err("%s: Doing sw reset\n", __func__);
+		msm_dsi_sw_reset();
+	}
 	/* Check for x_HS_FIFO_EMPTY */
 	if (readl_poll_timeout((ctrl_base + DSI_FIFO_STATUS),
 				status,
@@ -663,7 +703,8 @@ static int msm_dsi_cmds_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 dsi_cmds_tx_err:
 	return rc;
 }
-
+//replace the rx function with 1.9pre-cs
+#if 0
 static int msm_dsi_parse_rx_response(struct dsi_buf *rp)
 {
 	int rc = 0;
@@ -695,6 +736,7 @@ static int msm_dsi_parse_rx_response(struct dsi_buf *rp)
 
 	return rc;
 }
+#endif
 
 /* MIPI_DSI_MRPS, Maximum Return Packet Size */
 static char max_pktsize[2] = {0x00, 0x00}; /* LSB tx first, 10 bytes */
@@ -704,6 +746,8 @@ static struct dsi_cmd_desc pkt_size_cmd = {
 	max_pktsize,
 };
 
+//replace the rx function with 1.9pre-cs
+#if 0
 static int msm_dsi_set_max_packet_size(struct mdss_dsi_ctrl_pdata *ctrl,
 						int size)
 {
@@ -842,19 +886,139 @@ static int msm_dsi_cmds_rx_2(struct mdss_dsi_ctrl_pdata *ctrl,
 
 	return rc;
 }
+#endif
 
 int msm_dsi_cmds_rx(struct mdss_dsi_ctrl_pdata *ctrl,
 			struct dsi_cmd_desc *cmds, int rlen)
 {
-	int rc;
-	if (rlen <= DSI_MAX_PKT_SIZE)
-		rc = msm_dsi_cmds_rx_1(ctrl, cmds, rlen);
-	else
-		rc = msm_dsi_cmds_rx_2(ctrl, cmds, rlen);
+	int data_byte, rx_byte, dlen, end;
+	int short_response, diff, pkt_size, ret = 0;
+	struct dsi_buf *tp, *rp;
+	char cmd;
+	// to solve short register read error
+	if (rlen <= 2) {
+		short_response = 1;
+		rx_byte = 4;
+	} else {
+		short_response = 0;
+		data_byte = 8;	/* first read */
+		/*
+		 * add extra 2 padding bytes to have overall
+		 * packet size is multipe by 4. This also make
+		 * sure 4 bytes dcs headerlocates within a
+		 * 32 bits register after shift in.
+		 */
+		pkt_size = data_byte + 2;
+		rx_byte = data_byte + 8; /* 4 header + 2 crc  + 2 padding*/
+	}
 
-	return rc;
+
+	tp = &ctrl->tx_buf;
+	rp = &ctrl->rx_buf;
+	end = 0;
+	mdss_dsi_buf_init(rp);
+	while (!end) {
+		pr_debug("%s: rlen=%d pkt_size=%d rx_byte=%d\n",
+				__func__, rlen, pkt_size, rx_byte);
+		 if (!short_response) {
+			max_pktsize[0] = pkt_size;
+			mdss_dsi_buf_init(tp);
+			ret = mdss_dsi_cmd_dma_add(tp, &pkt_size_cmd);
+			if (!ret) {
+				pr_err("%s: failed to add max_pkt_size\n",
+					__func__);
+				rp->len = 0;
+				goto dsi_cmds_rx_error;
+			}
+
+			msm_dsi_wait4video_eng_busy(ctrl);
+
+			ret = msm_dsi_cmd_dma_tx(ctrl, tp);
+			if (IS_ERR_VALUE(ret)) {
+				pr_err("%s: failed to tx max_pkt_size\n",
+					__func__);
+				rp->len = 0;
+				goto dsi_cmds_rx_error;
+			}
+			pr_debug("%s: max_pkt_size=%d sent\n",
+						__func__, pkt_size);
+		}
+
+		mdss_dsi_buf_init(tp);
+		ret = mdss_dsi_cmd_dma_add(tp, cmds);
+		if (!ret) {
+			pr_err("%s: failed to add cmd = 0x%x\n",
+				__func__,  cmds->payload[0]);
+			rp->len = 0;
+			goto dsi_cmds_rx_error;
+		}
+
+		msm_dsi_wait4video_eng_busy(ctrl);	/* video mode only */
+		/* transmit read comamnd to client */
+		ret = msm_dsi_cmd_dma_tx(ctrl, tp);
+		if (IS_ERR_VALUE(ret)) {
+			pr_err("%s: failed to tx cmd = 0x%x\n",
+				__func__,  cmds->payload[0]);
+			rp->len = 0;
+			goto dsi_cmds_rx_error;
+		}
+		/*
+		 * once cmd_dma_done interrupt received,
+		 * return data from client is ready and stored
+		 * at RDBK_DATA register already
+		 * since rx fifo is 16 bytes, dcs header is kept at first loop,
+		 * after that dcs header lost during shift into registers
+		 */
+		dlen = msm_dsi_cmd_dma_rx(ctrl, rp, rx_byte);
+
+		if (short_response)
+			break;
+
+		if (rlen <= data_byte) {
+			diff = data_byte - rlen;
+			end = 1;
+		} else {
+			diff = 0;
+			rlen -= data_byte;
+		}
+
+		dlen -= 2; /* 2 padding bytes */
+		dlen -= 2; /* 2 crc */
+		dlen -= diff;
+		rp->data += dlen;	/* next start position */
+		rp->len += dlen;
+		data_byte = 12;	/* NOT first read */
+		pkt_size += data_byte;
+		pr_debug("%s: rp data=%x len=%d dlen=%d diff=%d\n",
+			__func__, (int)rp->data, rp->len, dlen, diff);
+	}
+
+	rp->data = rp->start;	/* move back to start position */
+	cmd = rp->data[0];
+	switch (cmd) {
+	case DTYPE_ACK_ERR_RESP:
+		pr_debug("%s: rx ACK_ERR_PACLAGE\n", __func__);
+		rp->len = 0;
+		break;
+	case DTYPE_GEN_READ1_RESP:
+	case DTYPE_DCS_READ1_RESP:
+		mdss_dsi_short_read1_resp(rp);
+		break;
+	case DTYPE_GEN_READ2_RESP:
+	case DTYPE_DCS_READ2_RESP:
+		mdss_dsi_short_read2_resp(rp);
+		break;
+	case DTYPE_GEN_LREAD_RESP:
+	case DTYPE_DCS_LREAD_RESP:
+		mdss_dsi_long_read_resp(rp);
+		break;
+	default:
+		pr_warning("%s:Invalid response cmd\n", __func__);
+		rp->len = 0;
+	}
+dsi_cmds_rx_error:
+	return rp->len;
 }
-
 void msm_dsi_cmdlist_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 				struct dcs_cmd_req *req)
 {
@@ -905,12 +1069,16 @@ void msm_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 	}
 
 	msm_dsi_clk_ctrl(&ctrl->panel_data, 1);
+	if (0 == (req->flags & CMD_REQ_LP_MODE))
+		dsi_set_tx_power_mode(0);
 
 	if (req->flags & CMD_REQ_RX)
 		msm_dsi_cmdlist_rx(ctrl, req);
 	else
 		msm_dsi_cmdlist_tx(ctrl, req);
 
+	if (0 == (req->flags & CMD_REQ_LP_MODE))
+	dsi_set_tx_power_mode(1);
 	msm_dsi_clk_ctrl(&ctrl->panel_data, 0);
 
 	mutex_unlock(&ctrl->cmd_mutex);
@@ -997,6 +1165,13 @@ static int msm_dsi_on(struct mdss_panel_data *pdata)
 	}
 
 	msm_dsi_ahb_ctrl(1);
+#ifdef CONFIG_HUAWEI_KERNEL
+    if((pdata ->panel_info.huawei_dynamic_fps) && (dsi_host_private->ctrl_pdata->panel_data.panel_info.mipi.frame_rate != DEFAULT_FRAME_RATE))
+    {
+        dsi_host_private->ctrl_pdata->panel_data.panel_info.mipi.frame_rate = DEFAULT_FRAME_RATE;
+    }
+#endif
+
 	msm_dsi_phy_sw_reset(dsi_host_private->dsi_base);
 	msm_dsi_phy_init(dsi_host_private->dsi_base, pdata);
 
@@ -1124,7 +1299,45 @@ static int msm_dsi_off(struct mdss_panel_data *pdata)
 
 	return ret;
 }
+//add patch from  qcom
+int msm_dsi_bta_status_check(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
+{
+	int ret = 1;
+	if (ctrl_pdata == NULL) {
+		pr_err("%s: Invalid input data\n", __func__);
+		return 0;
+	}
+	mutex_lock(&bta_read);
+	if(1 == esd_bta_flag)
+	{
+		msm_dsi_set_irq(ctrl_pdata, DSI_INTR_BTA_DONE_MASK);
+		INIT_COMPLETION(ctrl_pdata->bta_comp);
 
+		/* BTA trigger */
+		MIPI_OUTP(dsi_host_private->dsi_base + DSI_CMD_MODE_BTA_SW_TRIGGER,
+								0x01);
+		wmb();
+		ret = wait_for_completion_killable_timeout(&ctrl_pdata->bta_comp,
+							HZ/10);
+
+		if (ret <= 0) {
+
+			msm_dsi_clear_irq(ctrl_pdata, DSI_INTR_BTA_DONE_MASK);
+			pr_err("%s: DSI BTA error: %i\n", __func__, __LINE__);
+		}
+#ifdef CONFIG_HUAWEI_LCD
+		else
+		{
+			ret = lcd_esd_check(ctrl_pdata);
+			if(0 == ret)
+			pr_err("%s: IC register status error: %i\n", __func__, __LINE__);
+		}
+#endif
+	}
+	mutex_unlock(&bta_read);
+	pr_debug("%s: BTA done with ret: %d\n", __func__, ret);
+	return ret;
+}
 static int msm_dsi_cont_on(struct mdss_panel_data *pdata)
 {
 	struct mdss_panel_info *pinfo;
@@ -1326,6 +1539,8 @@ static int msm_dsi_clk_ctrl(struct mdss_panel_data *pdata, int enable)
 void msm_dsi_ctrl_init(struct mdss_dsi_ctrl_pdata *ctrl)
 {
 	init_completion(&ctrl->dma_comp);
+	//add patch from qcom
+	init_completion(&ctrl->bta_comp);
 	init_completion(&ctrl->mdp_comp);
 	init_completion(&ctrl->video_comp);
 	spin_lock_init(&ctrl->irq_lock);
@@ -1337,6 +1552,8 @@ void msm_dsi_ctrl_init(struct mdss_dsi_ctrl_pdata *ctrl)
 	dsi_buf_alloc(&ctrl->rx_buf, SZ_4K);
 	ctrl->cmdlist_commit = msm_dsi_cmdlist_commit;
 	ctrl->panel_mode = ctrl->panel_data.panel_info.mipi.mode;
+	//add patch from qcom
+	ctrl->check_status = msm_dsi_bta_status_check;
 }
 
 static int __devinit msm_dsi_probe(struct platform_device *pdev)
@@ -1453,7 +1670,9 @@ static int __devinit msm_dsi_probe(struct platform_device *pdev)
 	}
 
 	pr_debug("%s: Dsi Ctrl->0 initialized\n", __func__);
-
+#ifdef CONFIG_HUAWEI_KERNEL
+    dsi_host_private->ctrl_pdata = ctrl_pdata;
+#endif  //CONFIG_HUAWEI_KERNEL
 	dsi_host_private->dis_dev = pdev->dev;
 	intf.on = msm_dsi_on;
 	intf.off = msm_dsi_off;
@@ -1515,6 +1734,154 @@ static int __devexit msm_dsi_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#ifdef CONFIG_HUAWEI_KERNEL
+void msm_set_phy_params(void)
+{
+    u32 temp, val;
+
+    temp = MIPI_INP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_1);
+    val = (temp & 0xFFFFFF00) | (dsi_pll_divider_config.fb_divider & 0xFF);
+    MIPI_OUTP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_1, val);
+
+    temp = MIPI_INP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_2);
+    val = (temp & 0xFFFFFFF8) | ((dsi_pll_divider_config.fb_divider >> 8) & 0x07);
+    MIPI_OUTP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_2, val);
+
+    temp = MIPI_INP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_3);
+    val = (temp & 0xFFFFFFC0) | (dsi_pll_divider_config.ref_divider_ratio - 1);
+    MIPI_OUTP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_3, val);
+
+    /* set the bit clk divider */
+    temp = MIPI_INP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_8);
+    val = (temp & 0xFFFFFFF0) | (dsi_pll_divider_config.bit_clk_divider - 1);
+    MIPI_OUTP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_8, val);
+
+    /* set the byte clk divider */
+    temp = MIPI_INP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_9);
+    val = (temp & 0xFFFFFF00) | (dsi_pll_divider_config.byte_clk_divider - 1);
+    MIPI_OUTP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_9, val);
+
+    temp = MIPI_INP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_10);
+    val = (temp & 0xFFFFFF00) | (dsi_pll_divider_config.digital_posDiv - 1);
+    MIPI_OUTP(dsi_host_private->dsi_base + DSI_DSIPHY_PLL_CTRL_10, val);
+}
+
+/* rate is the bit clk rate */
+static long msm_dsi_pll_vco_round_rate(unsigned long rate)
+{
+    unsigned long vco_rate;
+
+    vco_rate = rate;
+    if (rate < DFS_VCO_CLK_MIN)
+        vco_rate = DFS_VCO_CLK_MIN;
+    else if (rate > DFS_VCO_CLK_MAX)
+        vco_rate = DFS_VCO_CLK_MAX;
+
+    return vco_rate;
+}
+
+int msm_config_phy_params(void)
+{
+    int ret = 0;
+    u32 bitclk_rate = 0, dsiclk_rate = 0, byteclk_rate = 0, pclk_rate = 0;
+    u32 fb_divider = 0, div_ratio = 0;
+    unsigned long vco_rate = 0;
+
+    msm_dsi_cal_clk_rate(&(dsi_host_private->ctrl_pdata->panel_data), &bitclk_rate, &dsiclk_rate, &byteclk_rate, &pclk_rate);
+
+    for (div_ratio = 1; div_ratio < DSI_MAX_DIVIDER; div_ratio++)
+    {
+        vco_rate = msm_dsi_pll_vco_round_rate(bitclk_rate * div_ratio);
+
+        if (vco_rate == bitclk_rate * div_ratio)
+            break;
+
+        if (vco_rate < bitclk_rate * div_ratio)
+            return -EINVAL;
+    }
+    if (vco_rate != bitclk_rate * div_ratio)
+        return -EINVAL;
+    //div same as dsi_pll_vco_set_rate in clock-dsi-8610.c
+    fb_divider = ((vco_rate / 10) * PREF_DIV_RATIO) / (DSI_ESC_CLK_RATE / 10);
+    fb_divider = fb_divider / 2 - 1;
+
+    dsi_pll_divider_config.fb_divider = fb_divider;
+    dsi_pll_divider_config.ref_divider_ratio = PREF_DIV_RATIO;
+    dsi_pll_divider_config.bit_clk_divider = div_ratio;
+    dsi_pll_divider_config.byte_clk_divider = vco_rate / byteclk_rate;
+    dsi_pll_divider_config.digital_posDiv = vco_rate / dsiclk_rate;//dsi_clk_divider = vco_rate / rate
+
+    return ret;
+}
+
+void mdss_fb_cancel_fps_timer(void)
+{
+    /* cancal timer */
+    mutex_lock(&mdss_fps_mutexlock);
+    cancel_delayed_work(&mdp_dynamic_frame_rate_worker);
+    flush_workqueue(mdp_dynamic_frame_rate_wq);
+    mutex_unlock(&mdss_fps_mutexlock);
+}
+
+static void mdp_dynamic_frame_rate_workqueue_handler(struct work_struct *work)
+{
+    int ret = 0;
+    mdss_dsi_set_fps_flag = true;
+    ret = msm_dsi_wait4video_done(dsi_host_private->ctrl_pdata);
+    mdss_dsi_set_fps_flag = false;
+    //mdss_change_fps_error_flag == true means fifo_timeout; ret < 0 means wait isr timeout
+    if((mdss_change_fps_error_flag) || (ret < 0))
+    {
+        pr_err("%s:timer work timeout ret = %d, mdss_change_fps_error_flag = %d\n", __func__,ret, mdss_change_fps_error_flag);
+        /* set timer to redo the FPS set */
+        queue_delayed_work(mdp_dynamic_frame_rate_wq,
+                          &mdp_dynamic_frame_rate_worker,
+                          msecs_to_jiffies(MDSS_FPS_WAIT_MS));
+    }
+    else
+    {
+        msm_dsi_error(dsi_host_private->dsi_base);
+    }
+}
+void mdss_change_fps(void)
+{
+    u32 status;
+    status = MIPI_INP(dsi_host_private->dsi_base + DSI_FIFO_STATUS);
+    if ((status & MDSS_DSI_0_FIFO_EMPTY_STATUS) != MDSS_DSI_0_FIFO_EMPTY_STATUS)
+    {
+        mdss_change_fps_error_flag = true;//need redo the mipi settings in timer
+        pr_debug("%s: mdss_change_fps_error_flag = %d\n", __func__,mdss_change_fps_error_flag);
+        return;
+    }
+    mdss_change_fps_error_flag = false;
+    msm_set_phy_params();
+}
+
+int mdss_dsi_set_fps(int frame_rate)
+{
+    int ret = 0;
+    if((dsi_host_private->ctrl_pdata->panel_data.panel_info.huawei_dynamic_fps)
+        && ((frame_rate >= LOW_FRAME_RATE) && (frame_rate <= DEFAULT_FRAME_RATE)))
+    {
+        pr_err("set frame rate %d\n", frame_rate);
+        if(mdss_change_fps_error_flag)
+        {
+            mdss_fb_cancel_fps_timer();
+        }
+        dsi_host_private->ctrl_pdata->panel_data.panel_info.mipi.frame_rate = frame_rate;
+        msm_config_phy_params();
+        queue_delayed_work(mdp_dynamic_frame_rate_wq,
+                          &mdp_dynamic_frame_rate_worker,
+                          msecs_to_jiffies(MDSS_FPS_START_MS));
+    }
+    else
+    {
+        pr_err("%s: set frame rate fail\n", __func__);
+        ret = -EINVAL;
+    }
+    return ret;
+}
+#endif  //CONFIG_HUAWEI_KERNEL
 static const struct of_device_id msm_dsi_v2_dt_match[] = {
 	{.compatible = "qcom,msm-dsi-v2"},
 	{}
@@ -1541,6 +1908,12 @@ static int __init msm_dsi_v2_driver_init(void)
 	int ret;
 
 	ret = msm_dsi_v2_register_driver();
+#ifdef CONFIG_HUAWEI_KERNEL
+    mutex_init(&mdss_fps_mutexlock);
+    mdp_dynamic_frame_rate_wq = create_singlethread_workqueue("mdp_dynamic_frame_rate_wq");
+    INIT_DELAYED_WORK(&mdp_dynamic_frame_rate_worker,
+                mdp_dynamic_frame_rate_workqueue_handler);
+#endif
 	if (ret) {
 		pr_err("msm_dsi_v2_register_driver() failed!\n");
 		return ret;

@@ -605,7 +605,7 @@ static int wcd9xxx_device_init(struct wcd9xxx *wcd9xxx)
 				wcd9xxx->codec_type->num_irqs,
 				wcd9xxx_num_irq_regs(wcd9xxx),
 				wcd9xxx_reg_read, wcd9xxx_reg_write,
-				wcd9xxx_bulk_read);
+				wcd9xxx_bulk_read, wcd9xxx_bulk_write);
 
 	if (wcd9xxx_core_irq_init(&wcd9xxx->core_res))
 		goto err;

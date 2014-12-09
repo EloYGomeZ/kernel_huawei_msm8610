@@ -1226,6 +1226,8 @@ need_lock:
 	mutex_unlock(&ctrl->cmd_mutex);
 }
 
+
+
 static void dsi_send_events(struct mdss_dsi_ctrl_pdata *ctrl, u32 events)
 {
 	struct dsi_event_q *evq;

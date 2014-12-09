@@ -726,11 +726,10 @@ static int qpnp_mpp_set(struct qpnp_led_data *led)
 		if (led->mpp_cfg->pwm_mode != MANUAL_MODE)
 			pwm_enable(led->mpp_cfg->pwm_cfg->pwm_dev);
 		else {
-			if (led->cdev.brightness < LED_MPP_CURRENT_MIN)
-				led->cdev.brightness = LED_MPP_CURRENT_MIN;
-
-			val = (led->cdev.brightness / LED_MPP_CURRENT_MIN) - 1;
-
+			/* 0--5mA;  1--10mA; 2--15mA; 3--20mA; 
+			 * 4--25mA; 5--30mA; 6--35mA; 7--40mA; */
+			val = (led->mpp_cfg->current_setting / LED_MPP_CURRENT_MIN) - 1;
+			
 			rc = qpnp_led_masked_write(led,
 					LED_MPP_SINK_CTRL(led->base),
 					LED_MPP_SINK_MASK, val);
@@ -3078,12 +3077,18 @@ static int __devinit qpnp_get_config_mpp(struct qpnp_led_data *led,
 	led->mpp_cfg->current_setting = LED_MPP_CURRENT_MIN;
 	rc = of_property_read_u32(node, "qcom,current-setting", &val);
 	if (!rc) {
-		if (led->mpp_cfg->current_setting < LED_MPP_CURRENT_MIN)
+		if (val < LED_MPP_CURRENT_MIN)
+		{
 			led->mpp_cfg->current_setting = LED_MPP_CURRENT_MIN;
-		else if (led->mpp_cfg->current_setting > LED_MPP_CURRENT_MAX)
-			led->mpp_cfg->current_setting = LED_MPP_CURRENT_MAX;
+		}
+		else if (val > LED_MPP_CURRENT_MAX)
+		{
+            led->mpp_cfg->current_setting = LED_MPP_CURRENT_MAX;
+		}
 		else
+		{
 			led->mpp_cfg->current_setting = (u8) val;
+        }
 	} else if (rc != -EINVAL)
 		return rc;
 
